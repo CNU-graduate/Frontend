@@ -1,6 +1,12 @@
 ﻿"use client";
 
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import {
+  useEffect,
+  useMemo,
+  useState,
+  type FormEvent,
+  type ReactNode,
+} from "react";
 import {
   AlertTriangle,
   BarChart3,
@@ -13,9 +19,11 @@ import {
   FileText,
   HeartPulse,
   Home,
+  LogIn,
   Mic,
   Play,
   Plus,
+  ShieldCheck,
   Settings,
   Square,
   UserRound,
@@ -37,16 +45,22 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Progress } from "@/components/ui/progress";
 import { Switch } from "@/components/ui/switch";
+import { Textarea } from "@/components/ui/textarea";
 
 type Screen =
+  | "login"
   | "home"
   | "record"
   | "abc"
   | "records"
   | "analysis"
   | "students"
+  | "newStudent"
+  | "recordStudent"
   | "settings";
 
 type Student = {
@@ -78,8 +92,12 @@ type DraftRecord = Pick<
   "id" | "studentId" | "studentName" | "date" | "time" | "duration"
 >;
 
+type PendingRecord = Pick<BehaviorRecord, "id" | "date" | "time" | "duration">;
+
 const T = {
   appTitle: "\uC2E4\uC2DC\uAC04 ABC \uD589\uB3D9 \uAE30\uB85D",
+  loginTitle: "\uD2B9\uC218\uAD50\uC0AC \uB85C\uADF8\uC778",
+  loginSubtitle: "\uD559\uC0DD \uD589\uB3D9 \uAE30\uB85D\uC744 \uC548\uC804\uD558\uAC8C \uAD00\uB9AC\uD558\uC138\uC694.",
   home: "\uD648",
   record: "\uAE30\uB85D",
   records: "\uBAA9\uB85D",
@@ -96,6 +114,8 @@ const T = {
   selectStudent: "\uD559\uC0DD \uC120\uD0DD",
   selectStudentHelp:
     "\uAD00\uCC30 \uB300\uC0C1 \uD559\uC0DD\uC744 \uC120\uD0DD\uD558\uACE0 \uD0C0\uC774\uBA38\uB97C \uC2DC\uC791\uD558\uC138\uC694.",
+  selectStudentAfterRecording:
+    "\uB179\uC74C\uD55C \uAE30\uB85D\uC744 \uC5B4\uB5A4 \uD559\uC0DD\uC5D0\uAC8C \uC5F0\uACB0\uD560\uC9C0 \uC120\uD0DD\uD558\uC138\uC694.",
   recording: "\uAE30\uB85D \uC911",
   startRecord: "\uAE30\uB85D \uC2DC\uC791",
   endBehavior: "\uD589\uB3D9 \uC885\uB8CC",
@@ -190,6 +210,15 @@ const consequenceOptions = [
   "\uBCF4\uD638\uC790 \uACF5\uC720 \uD544\uC694",
 ];
 
+const studentToneOptions = [
+  "bg-sky-100 text-sky-800",
+  "bg-teal-100 text-teal-800",
+  "bg-orange-100 text-orange-800",
+  "bg-indigo-100 text-indigo-800",
+  "bg-rose-100 text-rose-800",
+  "bg-slate-100 text-slate-700",
+];
+
 const initialRecords: BehaviorRecord[] = [
   {
     id: "rec-1",
@@ -243,7 +272,7 @@ function formatDuration(seconds: number) {
 }
 
 export default function Page() {
-  const [screen, setScreen] = useState<Screen>("home");
+  const [screen, setScreen] = useState<Screen>("login");
   const [students, setStudents] = useState<Student[]>(studentsSeed);
   const [records, setRecords] = useState<BehaviorRecord[]>(initialRecords);
   const [selectedStudentId, setSelectedStudentId] = useState(
@@ -252,12 +281,18 @@ export default function Page() {
   const [isRecording, setIsRecording] = useState(false);
   const [elapsed, setElapsed] = useState(0);
   const [draft, setDraft] = useState<DraftRecord | null>(null);
+  const [pendingRecord, setPendingRecord] = useState<PendingRecord | null>(null);
   const [editingRecordId, setEditingRecordId] = useState<string | null>(null);
   const [selectedA, setSelectedA] = useState("");
   const [selectedBehavior, setSelectedBehavior] = useState<Behavior | "">("");
   const [selectedC, setSelectedC] = useState("");
   const [memo, setMemo] = useState("");
   const [alertsOn, setAlertsOn] = useState(true);
+  const [newStudentName, setNewStudentName] = useState("");
+  const [newStudentGrade, setNewStudentGrade] = useState("");
+  const [newStudentSupport, setNewStudentSupport] = useState("");
+  const [teacherName, setTeacherName] = useState(T.teacher);
+  const [teacherPassword, setTeacherPassword] = useState("");
 
   const selectedStudent =
     students.find((student) => student.id === selectedStudentId) ?? students[0];
@@ -305,6 +340,7 @@ export default function Page() {
   const handleStartRecording = () => {
     setElapsed(0);
     setDraft(null);
+    setPendingRecord(null);
     setEditingRecordId(null);
     resetAbc();
     setIsRecording(true);
@@ -313,10 +349,8 @@ export default function Page() {
 
   const handleEndRecording = () => {
     const now = new Date();
-    setDraft({
+    setPendingRecord({
       id: `rec-${records.length + 1}`,
-      studentId: selectedStudent.id,
-      studentName: selectedStudent.name,
       date: todayString(),
       time: now.toLocaleTimeString("ko-KR", {
         hour: "2-digit",
@@ -326,6 +360,22 @@ export default function Page() {
       duration: Math.max(elapsed, 1),
     });
     setIsRecording(false);
+    setScreen("recordStudent");
+  };
+
+  const handleSelectRecordedStudent = (studentId: string) => {
+    if (!pendingRecord) return;
+
+    const student = students.find((item) => item.id === studentId);
+    if (!student) return;
+
+    setSelectedStudentId(student.id);
+    setDraft({
+      ...pendingRecord,
+      studentId: student.id,
+      studentName: student.name,
+    });
+    setPendingRecord(null);
     setScreen("abc");
   };
 
@@ -374,46 +424,96 @@ export default function Page() {
     setScreen("abc");
   };
 
-  const addDemoStudent = () => {
-    const nextNumber = students.length + 1;
-    setStudents((current) => [
-      ...current,
-      {
-        id: `stu-${nextNumber}`,
-        name: `\uC2E0\uADDC\uD559\uC0DD ${nextNumber}`,
-        grade: "\uCD08 3",
-        support: "\uAD00\uCC30 \uACC4\uD68D \uC218\uB9BD \uC911",
-        tone: "bg-slate-100 text-slate-700",
-      },
-    ]);
+  const handleOpenNewStudent = () => {
+    setNewStudentName("");
+    setNewStudentGrade("");
+    setNewStudentSupport("");
+    setScreen("newStudent");
+  };
+
+  const handleSaveStudent = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+
+    const name = newStudentName.trim();
+    if (!name) return;
+
+    const nextStudent: Student = {
+      id: `stu-${Date.now()}`,
+      name,
+      grade: newStudentGrade.trim() || "\uBBF8\uC785\uB825",
+      support: newStudentSupport.trim() || "\uC9C0\uC6D0 \uACC4\uD68D \uBBF8\uC785\uB825",
+      tone: studentToneOptions[students.length % studentToneOptions.length],
+    };
+
+    setStudents((current) => [...current, nextStudent]);
+    setSelectedStudentId(nextStudent.id);
+    setNewStudentName("");
+    setNewStudentGrade("");
+    setNewStudentSupport("");
+    setScreen("students");
+  };
+
+  const handleLogin = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!teacherName.trim() || !teacherPassword.trim()) return;
+    setScreen("home");
   };
 
   const currentTitle =
-    screen === "home"
+    screen === "login"
+      ? T.loginTitle
+      : screen === "home"
       ? T.appTitle
       : screen === "record"
         ? T.recordingScreen
         : screen === "abc"
           ? T.abcInput
-          : screen === "records"
-            ? T.recordList
-            : screen === "analysis"
-              ? T.analysisTitle
-              : screen === "students"
-                ? T.studentManage
-                : T.settingsTitle;
+          : screen === "recordStudent"
+            ? T.selectStudent
+            : screen === "records"
+              ? T.recordList
+              : screen === "analysis"
+                ? T.analysisTitle
+                : screen === "students"
+                  ? T.studentManage
+                  : screen === "newStudent"
+                    ? "\uD559\uC0DD \uC815\uBCF4 \uC785\uB825"
+                    : T.settingsTitle;
 
   return (
     <main className="min-h-dvh bg-[#dfe9ed] text-slate-900">
       <div className="mx-auto flex min-h-dvh w-full max-w-[430px] flex-col bg-[#f8fbfb] shadow-2xl shadow-slate-400/30">
-        <AppHeader
-          title={currentTitle}
-          subtitle={screen === "home" ? "" : T.className}
-          showBack={screen !== "home"}
-          onBack={() => setScreen("home")}
-        />
+        {screen !== "login" && (
+          <AppHeader
+            title={currentTitle}
+            subtitle={screen === "home" ? teacherName : T.className}
+            showBack={screen !== "home"}
+            onBack={() => {
+              if (screen === "newStudent") {
+                setScreen("students");
+                return;
+              }
+              if (screen === "recordStudent") {
+                setPendingRecord(null);
+                setElapsed(0);
+              }
+              setScreen("home");
+            }}
+          />
+        )}
 
-        <div className="flex-1 overflow-y-auto px-4 pb-24">
+        <div
+          className={`flex-1 overflow-y-auto px-4 ${screen === "login" ? "pb-6" : "pb-24"}`}
+        >
+          {screen === "login" && (
+            <LoginScreen
+              teacherName={teacherName}
+              password={teacherPassword}
+              onTeacherNameChange={setTeacherName}
+              onPasswordChange={setTeacherPassword}
+              onLogin={handleLogin}
+            />
+          )}
           {screen === "home" && (
             <HomeScreen
               todayCount={todayRecords.length}
@@ -435,6 +535,13 @@ export default function Page() {
               onSelectStudent={setSelectedStudentId}
               onStart={handleStartRecording}
               onEnd={handleEndRecording}
+            />
+          )}
+          {screen === "recordStudent" && pendingRecord && (
+            <RecordedStudentScreen
+              students={students}
+              duration={pendingRecord.duration}
+              onSelectStudent={handleSelectRecordedStudent}
             />
           )}
           {screen === "abc" && draft && (
@@ -465,7 +572,19 @@ export default function Page() {
             <StudentScreen
               students={students}
               records={records}
-              onAdd={addDemoStudent}
+              onAdd={handleOpenNewStudent}
+            />
+          )}
+          {screen === "newStudent" && (
+            <NewStudentScreen
+              name={newStudentName}
+              grade={newStudentGrade}
+              support={newStudentSupport}
+              onNameChange={setNewStudentName}
+              onGradeChange={setNewStudentGrade}
+              onSupportChange={setNewStudentSupport}
+              onCancel={() => setScreen("students")}
+              onSave={handleSaveStudent}
             />
           )}
           {screen === "settings" && (
@@ -473,9 +592,83 @@ export default function Page() {
           )}
         </div>
 
-        <BottomTabs active={screen} onNavigate={setScreen} />
+        {screen !== "login" && <BottomTabs active={screen} onNavigate={setScreen} />}
       </div>
     </main>
+  );
+}
+
+function LoginScreen({
+  teacherName,
+  password,
+  onTeacherNameChange,
+  onPasswordChange,
+  onLogin,
+}: {
+  teacherName: string;
+  password: string;
+  onTeacherNameChange: (value: string) => void;
+  onPasswordChange: (value: string) => void;
+  onLogin: (event: FormEvent<HTMLFormElement>) => void;
+}) {
+  return (
+    <section className="flex min-h-dvh flex-col justify-center py-8">
+      <div className="mb-8 space-y-5">
+        <div className="grid size-16 place-items-center rounded-2xl bg-sky-100 text-sky-800">
+          <ShieldCheck className="size-8" />
+        </div>
+        <div>
+          <p className="text-sm font-bold text-teal-700">{T.className}</p>
+          <h1 className="mt-2 text-3xl font-black tracking-normal text-slate-950">
+            {T.loginTitle}
+          </h1>
+          <p className="mt-3 text-sm leading-6 text-slate-500">
+            {T.loginSubtitle}
+          </p>
+        </div>
+      </div>
+
+      <form className="space-y-4" onSubmit={onLogin}>
+        <Card className="rounded-2xl border-0 bg-white shadow-sm">
+          <CardContent className="space-y-4 p-4">
+            <div className="space-y-2">
+              <Label htmlFor="teacher-name">{"\uAD50\uC0AC\uBA85"}</Label>
+              <Input
+                id="teacher-name"
+                value={teacherName}
+                onChange={(event) => onTeacherNameChange(event.target.value)}
+                placeholder={"\uC608: \uAE40\uC120\uC0DD\uB2D8"}
+                className="h-12 rounded-2xl bg-slate-50"
+                autoFocus
+                required
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="teacher-password">{"\uBE44\uBC00\uBC88\uD638"}</Label>
+              <Input
+                id="teacher-password"
+                type="password"
+                value={password}
+                onChange={(event) => onPasswordChange(event.target.value)}
+                placeholder={"\uBE44\uBC00\uBC88\uD638 \uC785\uB825"}
+                className="h-12 rounded-2xl bg-slate-50"
+                required
+              />
+            </div>
+          </CardContent>
+        </Card>
+
+        <Button
+          type="submit"
+          className="h-14 w-full rounded-2xl bg-sky-700 text-base font-bold text-white shadow-lg shadow-sky-100 hover:bg-sky-800"
+          disabled={!teacherName.trim() || !password.trim()}
+        >
+          <LogIn className="mr-2 size-5" />
+          {"\uB85C\uADF8\uC778"}
+        </Button>
+      </form>
+    </section>
   );
 }
 
@@ -631,44 +824,45 @@ function RecordScreen({
 }) {
   return (
     <section className="space-y-4 pt-4">
-      <Card className="rounded-2xl border-0 bg-white shadow-sm">
-        <CardHeader>
-          <CardTitle className="text-base">{T.selectStudent}</CardTitle>
-          <p className="text-sm text-slate-500">{T.selectStudentHelp}</p>
-        </CardHeader>
-        <CardContent className="grid grid-cols-1 gap-3">
-          {students.map((student) => (
-            <button
-              type="button"
-              key={student.id}
-              disabled={isRecording}
-              onClick={() => onSelectStudent(student.id)}
-              className={`flex items-center justify-between rounded-2xl border p-4 text-left shadow-sm transition ${
-                selectedStudentId === student.id
-                  ? "border-sky-700 bg-sky-50"
-                  : "border-slate-100 bg-white"
-              }`}
-            >
-              <div className="flex items-center gap-3">
-                <div
-                  className={`grid size-11 place-items-center rounded-2xl text-sm font-bold ${student.tone}`}
-                >
-                  {student.name.slice(0, 1)}
+      {!isRecording && (
+        <Card className="rounded-2xl border-0 bg-white shadow-sm">
+          <CardHeader>
+            <CardTitle className="text-base">{T.selectStudent}</CardTitle>
+            <p className="text-sm text-slate-500">{T.selectStudentHelp}</p>
+          </CardHeader>
+          <CardContent className="grid grid-cols-1 gap-3">
+            {students.map((student) => (
+              <button
+                type="button"
+                key={student.id}
+                onClick={() => onSelectStudent(student.id)}
+                className={`flex items-center justify-between rounded-2xl border p-4 text-left shadow-sm transition ${
+                  selectedStudentId === student.id
+                    ? "border-sky-700 bg-sky-50"
+                    : "border-slate-100 bg-white"
+                }`}
+              >
+                <div className="flex items-center gap-3">
+                  <div
+                    className={`grid size-11 place-items-center rounded-2xl text-sm font-bold ${student.tone}`}
+                  >
+                    {student.name.slice(0, 1)}
+                  </div>
+                  <div>
+                    <p className="font-bold">{student.name}</p>
+                    <p className="text-sm text-slate-500">{student.grade}</p>
+                  </div>
                 </div>
-                <div>
-                  <p className="font-bold">{student.name}</p>
-                  <p className="text-sm text-slate-500">{student.grade}</p>
-                </div>
-              </div>
-              {selectedStudentId === student.id && (
-                <Badge className="rounded-full bg-teal-100 text-teal-800 hover:bg-teal-100">
-                  {"\uC120\uD0DD"}
-                </Badge>
-              )}
-            </button>
-          ))}
-        </CardContent>
-      </Card>
+                {selectedStudentId === student.id && (
+                  <Badge className="rounded-full bg-teal-100 text-teal-800 hover:bg-teal-100">
+                    {"\uC120\uD0DD"}
+                  </Badge>
+                )}
+              </button>
+            ))}
+          </CardContent>
+        </Card>
+      )}
 
       <Card className="rounded-2xl border-0 bg-gradient-to-br from-sky-700 to-teal-700 text-white shadow-lg shadow-sky-100">
         <CardContent className="space-y-5 p-6 text-center">
@@ -681,9 +875,13 @@ function RecordScreen({
           </div>
           <div>
             <p className="text-sm text-sky-100">
-              {isRecording ? T.recording : selectedStudent.support}
+              {isRecording
+                ? "\uB179\uC74C \uD6C4 \uD559\uC0DD\uC744 \uC120\uD0DD\uD569\uB2C8\uB2E4"
+                : selectedStudent.support}
             </p>
-            <p className="mt-1 text-3xl font-black">{selectedStudent.name}</p>
+            <p className="mt-1 text-3xl font-black">
+              {isRecording ? T.recording : selectedStudent.name}
+            </p>
           </div>
           <p className="text-6xl font-black tabular-nums">
             {formatDuration(elapsed)}
@@ -805,6 +1003,65 @@ function AbcInputScreen({
           {T.completeRecord}
         </Button>
       </div>
+    </section>
+  );
+}
+
+function RecordedStudentScreen({
+  students,
+  duration,
+  onSelectStudent,
+}: {
+  students: Student[];
+  duration: number;
+  onSelectStudent: (id: string) => void;
+}) {
+  return (
+    <section className="space-y-4 pt-4">
+      <Card className="rounded-2xl border-0 bg-white shadow-sm">
+        <CardHeader>
+          <CardTitle className="text-base">{T.selectStudent}</CardTitle>
+          <p className="text-sm text-slate-500">
+            {T.selectStudentAfterRecording}
+          </p>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="rounded-2xl bg-sky-50 p-4 text-center">
+            <p className="text-sm font-bold text-sky-800">
+              {"\uB179\uC74C \uC2DC\uAC04"}
+            </p>
+            <p className="mt-1 text-4xl font-black tabular-nums text-slate-900">
+              {formatDuration(duration)}
+            </p>
+          </div>
+
+          <div className="grid grid-cols-1 gap-3">
+            {students.map((student) => (
+              <button
+                type="button"
+                key={student.id}
+                onClick={() => onSelectStudent(student.id)}
+                className="flex items-center justify-between rounded-2xl border border-slate-100 bg-white p-4 text-left shadow-sm transition hover:border-sky-700 hover:bg-sky-50"
+              >
+                <div className="flex items-center gap-3">
+                  <div
+                    className={`grid size-11 place-items-center rounded-2xl text-sm font-bold ${student.tone}`}
+                  >
+                    {student.name.slice(0, 1)}
+                  </div>
+                  <div>
+                    <p className="font-bold">{student.name}</p>
+                    <p className="text-sm text-slate-500">{student.grade}</p>
+                  </div>
+                </div>
+                <Badge className="rounded-full bg-sky-100 text-sky-800 hover:bg-sky-100">
+                  {"\uC120\uD0DD"}
+                </Badge>
+              </button>
+            ))}
+          </div>
+        </CardContent>
+      </Card>
     </section>
   );
 }
@@ -959,6 +1216,91 @@ function StudentScreen({
         );
       })}
     </section>
+  );
+}
+
+function NewStudentScreen({
+  name,
+  grade,
+  support,
+  onNameChange,
+  onGradeChange,
+  onSupportChange,
+  onCancel,
+  onSave,
+}: {
+  name: string;
+  grade: string;
+  support: string;
+  onNameChange: (value: string) => void;
+  onGradeChange: (value: string) => void;
+  onSupportChange: (value: string) => void;
+  onCancel: () => void;
+  onSave: (event: FormEvent<HTMLFormElement>) => void;
+}) {
+  return (
+    <form className="space-y-4 pt-4" onSubmit={onSave}>
+      <Card className="rounded-2xl border-0 bg-white shadow-sm">
+        <CardHeader className="pb-2">
+          <CardTitle className="text-base">{"\uD559\uC0DD \uC815\uBCF4"}</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="space-y-2">
+            <Label htmlFor="student-name">{"\uD559\uC0DD\uBA85"}</Label>
+            <Input
+              id="student-name"
+              value={name}
+              onChange={(event) => onNameChange(event.target.value)}
+              placeholder={"\uC608: \uD64D\uAE38\uB3D9"}
+              className="h-12 rounded-2xl bg-slate-50"
+              autoFocus
+              required
+            />
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="student-grade">{"\uD559\uB144"}</Label>
+            <Input
+              id="student-grade"
+              value={grade}
+              onChange={(event) => onGradeChange(event.target.value)}
+              placeholder={"\uC608: \uCD08 3"}
+              className="h-12 rounded-2xl bg-slate-50"
+            />
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="student-support">{"\uC9C0\uC6D0 \uBA54\uBAA8"}</Label>
+            <Textarea
+              id="student-support"
+              value={support}
+              onChange={(event) => onSupportChange(event.target.value)}
+              placeholder={"\uC608: \uC804\uD658 \uC0C1\uD669 \uC0AC\uC804 \uC608\uACE0"}
+              className="min-h-28 rounded-2xl bg-slate-50"
+            />
+          </div>
+        </CardContent>
+      </Card>
+
+      <div className="grid grid-cols-2 gap-3">
+        <Button
+          type="button"
+          variant="outline"
+          className="h-12 rounded-2xl font-bold"
+          onClick={onCancel}
+        >
+          {"\uCDE8\uC18C"}
+        </Button>
+        <Button
+          type="submit"
+          className="h-12 rounded-2xl bg-orange-400 font-bold text-white hover:bg-orange-500"
+          disabled={!name.trim()}
+        >
+          <Check className="mr-2 size-5" />
+          {"\uC800\uC7A5"}
+        </Button>
+      </div>
+    </form>
   );
 }
 
