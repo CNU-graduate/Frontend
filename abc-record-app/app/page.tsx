@@ -3,19 +3,21 @@
 import {
   useEffect,
   useMemo,
+  useRef,
   useState,
   type FormEvent,
   type ReactNode,
 } from "react";
 import {
-  AlertTriangle,
+  Activity,
   BarChart3,
-  Bell,
   BookOpenCheck,
+  Camera,
   Check,
   ChevronLeft,
   ClipboardList,
   Clock3,
+  CloudSun,
   FileText,
   HeartPulse,
   Home,
@@ -23,11 +25,13 @@ import {
   Mic,
   Play,
   Plus,
-  ShieldCheck,
   Settings,
+  ShieldCheck,
   Square,
+  Thermometer,
   UserRound,
   Users,
+  Volume2,
 } from "lucide-react";
 import {
   Bar,
@@ -72,6 +76,8 @@ type Student = {
 };
 
 type Behavior = "sound" | "leave" | "throw" | "cry" | "selfHarm";
+type MediaAssistStatus = "idle" | "active" | "fallback" | "disabled";
+type StoredMediaStatus = Exclude<MediaAssistStatus, "idle">;
 
 type BehaviorRecord = {
   id: string;
@@ -85,14 +91,51 @@ type BehaviorRecord = {
   consequence: string;
   memo: string;
   completed: boolean;
+  mediaAssistEnabled?: boolean;
+  mediaStatus?: StoredMediaStatus;
+  detectedBehavior?: string;
+  confidence?: number;
+  startedAt?: string;
+  endedAt?: string;
 };
 
 type DraftRecord = Pick<
   BehaviorRecord,
-  "id" | "studentId" | "studentName" | "date" | "time" | "duration"
+  | "id"
+  | "studentId"
+  | "studentName"
+  | "date"
+  | "time"
+  | "duration"
+  | "mediaAssistEnabled"
+  | "mediaStatus"
+  | "detectedBehavior"
+  | "confidence"
+  | "startedAt"
+  | "endedAt"
 >;
 
-type PendingRecord = Pick<BehaviorRecord, "id" | "date" | "time" | "duration">;
+type PendingRecord = Pick<
+  BehaviorRecord,
+  | "id"
+  | "date"
+  | "time"
+  | "duration"
+  | "mediaAssistEnabled"
+  | "mediaStatus"
+  | "detectedBehavior"
+  | "confidence"
+  | "startedAt"
+  | "endedAt"
+>;
+
+type WeatherInfo = {
+  temperature: number | null;
+  windSpeed: number | null;
+  condition: string;
+  location: string;
+  status: "loading" | "ready" | "error";
+};
 
 const T = {
   appTitle: "\uC2E4\uC2DC\uAC04 ABC \uD589\uB3D9 \uAE30\uB85D",
@@ -106,7 +149,7 @@ const T = {
   settings: "\uC124\uC815",
   todayRecords: "\uC624\uB298 \uAE30\uB85D",
   incomplete: "\uBBF8\uC644\uB8CC",
-  riskWatch: "\uC8FC\uC758 \uAD00\uCC30",
+  weather: "\uB0A0\uC528",
   startNow: "\uC989\uC2DC \uAE30\uB85D \uC2DC\uC791",
   recentRecords: "\uCD5C\uADFC \uAE30\uB85D",
   viewAll: "\uC804\uCCB4 \uBCF4\uAE30",
@@ -281,7 +324,9 @@ export default function Page() {
   const [isRecording, setIsRecording] = useState(false);
   const [elapsed, setElapsed] = useState(0);
   const [draft, setDraft] = useState<DraftRecord | null>(null);
-  const [pendingRecord, setPendingRecord] = useState<PendingRecord | null>(null);
+  const [pendingRecord, setPendingRecord] = useState<PendingRecord | null>(
+    null,
+  );
   const [editingRecordId, setEditingRecordId] = useState<string | null>(null);
   const [selectedA, setSelectedA] = useState("");
   const [selectedBehavior, setSelectedBehavior] = useState<Behavior | "">("");
@@ -293,6 +338,10 @@ export default function Page() {
   const [newStudentSupport, setNewStudentSupport] = useState("");
   const [teacherName, setTeacherName] = useState(T.teacher);
   const [teacherPassword, setTeacherPassword] = useState("");
+  const [mediaAssistStatus, setMediaAssistStatus] =
+    useState<MediaAssistStatus>("idle");
+  const [mediaStream, setMediaStream] = useState<MediaStream | null>(null);
+  const [mediaAssistStartedAt, setMediaAssistStartedAt] = useState("");
 
   const selectedStudent =
     students.find((student) => student.id === selectedStudentId) ?? students[0];
@@ -300,9 +349,6 @@ export default function Page() {
     (record) => record.date === todayString(),
   );
   const incompleteRecords = records.filter((record) => !record.completed);
-  const riskRecords = records.filter(
-    (record) => record.behavior === "selfHarm",
-  );
 
   const behaviorCounts = useMemo(() => {
     return Object.keys(behaviorMeta).map((key) => {
@@ -330,6 +376,12 @@ export default function Page() {
     return () => window.clearInterval(timer);
   }, [isRecording]);
 
+  useEffect(() => {
+    return () => {
+      mediaStream?.getTracks().forEach((track) => track.stop());
+    };
+  }, [mediaStream]);
+
   const resetAbc = () => {
     setSelectedA("");
     setSelectedBehavior("");
@@ -337,18 +389,35 @@ export default function Page() {
     setMemo("");
   };
 
-  const handleStartRecording = () => {
+  const handleStartRecording = async () => {
     setElapsed(0);
     setDraft(null);
     setPendingRecord(null);
     setEditingRecordId(null);
+    setMediaAssistStatus("active");
+    setMediaAssistStartedAt(new Date().toISOString());
     resetAbc();
     setIsRecording(true);
     setScreen("record");
+
+    try {
+      mediaStream?.getTracks().forEach((track) => track.stop());
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: true,
+        video: true,
+      });
+      setMediaStream(stream);
+      setMediaAssistStatus("active");
+    } catch {
+      setMediaStream(null);
+      setMediaAssistStatus("fallback");
+    }
   };
 
   const handleEndRecording = () => {
     const now = new Date();
+    mediaStream?.getTracks().forEach((track) => track.stop());
+    setMediaStream(null);
     setPendingRecord({
       id: `rec-${records.length + 1}`,
       date: todayString(),
@@ -358,6 +427,14 @@ export default function Page() {
         hour12: false,
       }),
       duration: Math.max(elapsed, 1),
+      mediaAssistEnabled: mediaAssistStatus !== "disabled",
+      mediaStatus:
+        mediaAssistStatus === "idle" ? "disabled" : mediaAssistStatus,
+      detectedBehavior:
+        mediaAssistStatus === "fallback" ? "\uD14D\uC2A4\uD2B8 \uAE30\uB85D \uBAA8\uB4DC" : "\uC18C\uC74C \uC0C1\uC2B9 \uD328\uD134",
+      confidence: mediaAssistStatus === "fallback" ? 0 : 0.72,
+      startedAt: mediaAssistStartedAt || now.toISOString(),
+      endedAt: now.toISOString(),
     });
     setIsRecording(false);
     setScreen("recordStudent");
@@ -401,6 +478,7 @@ export default function Page() {
     setDraft(null);
     setEditingRecordId(null);
     setElapsed(0);
+    setMediaAssistStatus("idle");
     resetAbc();
     setScreen("home");
   };
@@ -413,6 +491,12 @@ export default function Page() {
       date: record.date,
       time: record.time,
       duration: record.duration,
+      mediaAssistEnabled: record.mediaAssistEnabled,
+      mediaStatus: record.mediaStatus,
+      detectedBehavior: record.detectedBehavior,
+      confidence: record.confidence,
+      startedAt: record.startedAt,
+      endedAt: record.endedAt,
     });
     setEditingRecordId(record.id);
     setSelectedStudentId(record.studentId);
@@ -441,7 +525,9 @@ export default function Page() {
       id: `stu-${Date.now()}`,
       name,
       grade: newStudentGrade.trim() || "\uBBF8\uC785\uB825",
-      support: newStudentSupport.trim() || "\uC9C0\uC6D0 \uACC4\uD68D \uBBF8\uC785\uB825",
+      support:
+        newStudentSupport.trim() ||
+        "\uC9C0\uC6D0 \uACC4\uD68D \uBBF8\uC785\uB825",
       tone: studentToneOptions[students.length % studentToneOptions.length],
     };
 
@@ -518,7 +604,6 @@ export default function Page() {
             <HomeScreen
               todayCount={todayRecords.length}
               incompleteCount={incompleteRecords.length}
-              riskCount={riskRecords.length}
               records={records}
               onStart={handleStartRecording}
               onNavigate={setScreen}
@@ -532,9 +617,16 @@ export default function Page() {
               selectedStudent={selectedStudent}
               elapsed={elapsed}
               isRecording={isRecording}
+              mediaAssistStatus={mediaAssistStatus}
+              mediaStream={mediaStream}
               onSelectStudent={setSelectedStudentId}
               onStart={handleStartRecording}
               onEnd={handleEndRecording}
+              onSimulateFallback={() => {
+                mediaStream?.getTracks().forEach((track) => track.stop());
+                setMediaStream(null);
+                setMediaAssistStatus("fallback");
+              }}
             />
           )}
           {screen === "recordStudent" && pendingRecord && (
@@ -716,7 +808,6 @@ function AppHeader({
 function HomeScreen({
   todayCount,
   incompleteCount,
-  riskCount,
   records,
   onStart,
   onNavigate,
@@ -724,33 +815,108 @@ function HomeScreen({
 }: {
   todayCount: number;
   incompleteCount: number;
-  riskCount: number;
   records: BehaviorRecord[];
   onStart: () => void;
   onNavigate: (screen: Screen) => void;
   onEditDraft: (record: BehaviorRecord) => void;
 }) {
+  const [weather, setWeather] = useState<WeatherInfo>({
+    temperature: null,
+    windSpeed: null,
+    condition: "\uBD88\uB7EC\uC624\uB294 \uC911",
+    location: "\uD604\uC7AC \uC704\uCE58",
+    status: "loading",
+  });
+  const [currentTime, setCurrentTime] = useState(() => new Date());
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setCurrentTime(new Date()), 1000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+
+    const conditionLabel = (code: number) => {
+      if (code === 0) return "\uB9D1\uC74C";
+      if ([1, 2, 3].includes(code)) return "\uAD6C\uB984";
+      if ([45, 48].includes(code)) return "\uC548\uAC1C";
+      if ([51, 53, 55, 56, 57].includes(code)) return "\uC774\uC2AC\uBE44";
+      if ([61, 63, 65, 66, 67, 80, 81, 82].includes(code)) {
+        return "\uBE44";
+      }
+      if ([71, 73, 75, 77, 85, 86].includes(code)) return "\uB208";
+      if ([95, 96, 99].includes(code)) return "\uB1CC\uC6B0";
+      return "\uB0A0\uC528";
+    };
+
+    const loadWeather = async (
+      latitude: number,
+      longitude: number,
+      location: string,
+    ) => {
+      try {
+        const params = new URLSearchParams({
+          latitude: latitude.toString(),
+          longitude: longitude.toString(),
+          current: "temperature_2m,weather_code,wind_speed_10m",
+          timezone: "Asia/Seoul",
+        });
+        const response = await fetch(
+          `https://api.open-meteo.com/v1/forecast?${params.toString()}`,
+        );
+        if (!response.ok) throw new Error("weather request failed");
+        const data = await response.json();
+        if (!active) return;
+        setWeather({
+          temperature: Math.round(data.current.temperature_2m),
+          windSpeed: Math.round(data.current.wind_speed_10m),
+          condition: conditionLabel(data.current.weather_code),
+          location,
+          status: "ready",
+        });
+      } catch {
+        if (!active) return;
+        setWeather({
+          temperature: null,
+          windSpeed: null,
+          condition: "\uD655\uC778 \uBD88\uAC00",
+          location: "\uB0A0\uC528",
+          status: "error",
+        });
+      }
+    };
+
+    const loadDefaultWeather = () => loadWeather(36.3504, 127.3845, "\uB300\uC804");
+
+    if ("geolocation" in navigator) {
+      navigator.geolocation.getCurrentPosition(
+        (position) =>
+          loadWeather(
+            position.coords.latitude,
+            position.coords.longitude,
+            "\uD604\uC7AC \uC704\uCE58",
+          ),
+        loadDefaultWeather,
+        { timeout: 3000 },
+      );
+    } else {
+      loadDefaultWeather();
+    }
+
+    return () => {
+      active = false;
+    };
+  }, []);
+
   return (
     <section className="space-y-4 pt-4">
-      <div className="grid grid-cols-3 gap-2">
-        <MetricCard
-          label={T.todayRecords}
-          value={todayCount}
-          icon={<ClipboardList className="size-5" />}
-          tone="sky"
+      <div className="grid grid-cols-[1fr_1.25fr] gap-3">
+        <RecordSummaryCard
+          todayCount={todayCount}
+          incompleteCount={incompleteCount}
         />
-        <MetricCard
-          label={T.incomplete}
-          value={incompleteCount}
-          icon={<Clock3 className="size-5" />}
-          tone="orange"
-        />
-        <MetricCard
-          label={T.riskWatch}
-          value={riskCount}
-          icon={<AlertTriangle className="size-5" />}
-          tone="mint"
-        />
+        <WeatherMetricCard weather={weather} currentTime={currentTime} />
       </div>
 
       <Button
@@ -787,18 +953,6 @@ function HomeScreen({
         </CardContent>
       </Card>
 
-      <div className="grid grid-cols-2 gap-3">
-        <QuickLink
-          icon={<BarChart3 className="size-5" />}
-          label={T.analysisTitle}
-          onClick={() => onNavigate("analysis")}
-        />
-        <QuickLink
-          icon={<Users className="size-5" />}
-          label={T.studentManage}
-          onClick={() => onNavigate("students")}
-        />
-      </div>
     </section>
   );
 }
@@ -809,19 +963,27 @@ function RecordScreen({
   selectedStudent,
   elapsed,
   isRecording,
+  mediaAssistStatus,
+  mediaStream,
   onSelectStudent,
   onStart,
   onEnd,
+  onSimulateFallback,
 }: {
   students: Student[];
   selectedStudentId: string;
   selectedStudent: Student;
   elapsed: number;
   isRecording: boolean;
+  mediaAssistStatus: MediaAssistStatus;
+  mediaStream: MediaStream | null;
   onSelectStudent: (id: string) => void;
   onStart: () => void;
   onEnd: () => void;
+  onSimulateFallback: () => void;
 }) {
+  const isFallback = mediaAssistStatus === "fallback";
+
   return (
     <section className="space-y-4 pt-4">
       {!isRecording && (
@@ -829,6 +991,9 @@ function RecordScreen({
           <CardHeader>
             <CardTitle className="text-base">{T.selectStudent}</CardTitle>
             <p className="text-sm text-slate-500">{T.selectStudentHelp}</p>
+            <p className="text-sm font-semibold text-sky-700">
+              {"\uAE30\uB85D \uC2DC\uC791 \uC2DC \uC601\uC0C1\u00B7\uC74C\uC131 \uBCF4\uC870\uAC00 \uD65C\uC131\uD654\uB429\uB2C8\uB2E4."}
+            </p>
           </CardHeader>
           <CardContent className="grid grid-cols-1 gap-3">
             {students.map((student) => (
@@ -873,15 +1038,24 @@ function RecordScreen({
               <UserRound className="size-9" />
             )}
           </div>
+          {isRecording && (
+            <MediaAssistPreview
+              status={mediaAssistStatus}
+              stream={mediaStream}
+              onSimulateFallback={onSimulateFallback}
+            />
+          )}
           <div>
-            <p className="text-sm text-sky-100">
-              {isRecording
-                ? "\uB179\uC74C \uD6C4 \uD559\uC0DD\uC744 \uC120\uD0DD\uD569\uB2C8\uB2E4"
-                : selectedStudent.support}
-            </p>
             <p className="mt-1 text-3xl font-black">
-              {isRecording ? T.recording : selectedStudent.name}
+              {isRecording
+                ? T.recording
+                : selectedStudent.name}
             </p>
+            {!isRecording && (
+              <p className="mt-1 text-sm text-sky-100">
+                {selectedStudent.support}
+              </p>
+            )}
           </div>
           <p className="text-6xl font-black tabular-nums">
             {formatDuration(elapsed)}
@@ -905,9 +1079,99 @@ function RecordScreen({
               {T.endBehavior}
             </Button>
           )}
+          {isRecording && isFallback && (
+            <p className="text-sm font-semibold text-orange-100">
+              {"\uBBF8\uB514\uC5B4 \uD65C\uC131\uD654 \uC2E4\uD328: \uD14D\uC2A4\uD2B8 \uAE30\uB85D \uBAA8\uB4DC\uB85C \uACC4\uC18D \uC9C4\uD589\uD569\uB2C8\uB2E4."}
+            </p>
+          )}
         </CardContent>
       </Card>
     </section>
+  );
+}
+
+function MediaAssistPreview({
+  status,
+  stream,
+  onSimulateFallback,
+}: {
+  status: MediaAssistStatus;
+  stream: MediaStream | null;
+  onSimulateFallback: () => void;
+}) {
+  const isFallback = status === "fallback";
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+
+  useEffect(() => {
+    if (!videoRef.current) return;
+    videoRef.current.srcObject = stream;
+  }, [stream]);
+
+  return (
+    <div className="space-y-3 text-left">
+      <div className="flex items-center justify-between gap-2">
+        <Badge className="rounded-full bg-white/20 text-white hover:bg-white/20">
+          <Activity className="mr-1.5 size-3.5" />
+          {"\uC601\uC0C1\u00B7\uC74C\uC131 \uBCF4\uC870 \uBD84\uC11D \uC911"}
+        </Badge>
+        <Badge className="rounded-full bg-teal-100 text-teal-800 hover:bg-teal-100">
+          {"Privacy Safe"}
+        </Badge>
+      </div>
+
+      <div className="relative overflow-hidden rounded-2xl bg-slate-950/50 shadow-inner">
+        {!isFallback && stream ? (
+          <video
+            ref={videoRef}
+            title="실시간 카메라 미리보기"
+            aria-label="실시간 카메라와 마이크 보조 분석 미리보기"
+            autoPlay
+            muted
+            playsInline
+            className="aspect-video w-full object-cover opacity-90"
+          />
+        ) : (
+          <div className="grid aspect-video w-full place-items-center bg-slate-700 text-center text-white">
+            <div className="space-y-2 px-5">
+              <Camera className="mx-auto size-10 text-slate-200" />
+              <p className="text-sm font-black">
+                {"\uBBF8\uB514\uC5B4 \uC2A4\uD2B8\uB9BC \uBBF8\uC5F0\uACB0"}
+              </p>
+              <p className="text-xs font-semibold text-slate-200">
+                {"\uD14D\uC2A4\uD2B8 \uAE30\uB85D\uC740 \uACC4\uC18D \uAC00\uB2A5"}
+              </p>
+            </div>
+          </div>
+        )}
+
+        <div className="absolute inset-x-3 top-3 flex flex-wrap gap-2">
+          <span className="rounded-full bg-sky-950/70 px-3 py-1 text-xs font-bold text-white">
+            {"\uC2E4\uC2DC\uAC04 \uBD84\uC11D \uC911"}
+          </span>
+          <span className="rounded-full bg-sky-950/70 px-3 py-1 text-xs font-bold text-white">
+            {"\uC6D0\uBCF8 \uC800\uC7A5 \uC548 \uD568"}
+          </span>
+          <span className="rounded-full bg-teal-500/80 px-3 py-1 text-xs font-bold text-white">
+            {"\uD504\uB77C\uC774\uBC84\uC2DC \uBCF4\uD638 \uBAA8\uB4DC"}
+          </span>
+        </div>
+
+        <div className="absolute bottom-3 left-3 rounded-full bg-white/90 px-3 py-1 text-xs font-black text-sky-800">
+          {isFallback
+            ? "\uD14D\uC2A4\uD2B8 \uAE30\uB85D \uBAA8\uB4DC"
+            : "\uC2E4\uC2DC\uAC04 \uC2A4\uD2B8\uB9BC \uBD84\uC11D \uBCF4\uC870 \uC911"}
+        </div>
+      </div>
+
+      <Button
+        type="button"
+        variant="secondary"
+        className="h-10 w-full rounded-2xl bg-white/90 text-sm font-bold text-sky-800 hover:bg-white"
+        onClick={onSimulateFallback}
+      >
+        {"\uBBF8\uB514\uC5B4 \uC2E4\uD328 \uC2DC\uBBAC\uB808\uC774\uC158"}
+      </Button>
+    </div>
   );
 }
 
@@ -939,14 +1203,31 @@ function AbcInputScreen({
   return (
     <section className="space-y-4 pt-4">
       <Card className="rounded-2xl border-0 bg-white shadow-sm">
-        <CardContent className="flex items-center justify-between p-4">
-          <div>
-            <p className="text-sm text-slate-500">{draft.time}</p>
-            <p className="text-xl font-black">{draft.studentName}</p>
+        <CardContent className="space-y-4 p-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm text-slate-500">{draft.time}</p>
+              <p className="text-xl font-black">{draft.studentName}</p>
+            </div>
+            <Badge className="rounded-full bg-orange-100 text-orange-800 hover:bg-orange-100">
+              {formatDuration(draft.duration)}
+            </Badge>
           </div>
-          <Badge className="rounded-full bg-orange-100 text-orange-800 hover:bg-orange-100">
-            {formatDuration(draft.duration)}
-          </Badge>
+          {draft.mediaAssistEnabled && (
+            <div className="space-y-1 rounded-2xl bg-sky-50 p-3 text-sm font-semibold text-sky-800">
+              <p>
+                {draft.mediaStatus === "fallback"
+                  ? "\uBBF8\uB514\uC5B4 \uD65C\uC131\uD654 \uC2E4\uD328: \uD14D\uC2A4\uD2B8 \uAE30\uB85D \uBAA8\uB4DC\uB85C \uC9C4\uD589\uB428"
+                  : "\uC601\uC0C1\u00B7\uC74C\uC131 \uBCF4\uC870 \uBD84\uC11D \uBA54\uD0C0\uB370\uC774\uD130\uB9CC \uC800\uC7A5\uB429\uB2C8\uB2E4."}
+              </p>
+              <p>
+                {draft.detectedBehavior || "\uAC10\uC9C0 \uACB0\uACFC \uC5C6\uC74C"}
+                {typeof draft.confidence === "number"
+                  ? ` · ${Math.round(draft.confidence * 100)}%`
+                  : ""}
+              </p>
+            </div>
+          )}
         </CardContent>
       </Card>
 
@@ -1242,7 +1523,9 @@ function NewStudentScreen({
     <form className="space-y-4 pt-4" onSubmit={onSave}>
       <Card className="rounded-2xl border-0 bg-white shadow-sm">
         <CardHeader className="pb-2">
-          <CardTitle className="text-base">{"\uD559\uC0DD \uC815\uBCF4"}</CardTitle>
+          <CardTitle className="text-base">
+            {"\uD559\uC0DD \uC815\uBCF4"}
+          </CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="space-y-2">
@@ -1270,12 +1553,16 @@ function NewStudentScreen({
           </div>
 
           <div className="space-y-2">
-            <Label htmlFor="student-support">{"\uC9C0\uC6D0 \uBA54\uBAA8"}</Label>
+            <Label htmlFor="student-support">
+              {"\uC9C0\uC6D0 \uBA54\uBAA8"}
+            </Label>
             <Textarea
               id="student-support"
               value={support}
               onChange={(event) => onSupportChange(event.target.value)}
-              placeholder={"\uC608: \uC804\uD658 \uC0C1\uD669 \uC0AC\uC804 \uC608\uACE0"}
+              placeholder={
+                "\uC608: \uC804\uD658 \uC0C1\uD669 \uC0AC\uC804 \uC608\uACE0"
+              }
               className="min-h-28 rounded-2xl bg-slate-50"
             />
           </div>
@@ -1317,31 +1604,20 @@ function SettingsScreen({
         <CardContent className="flex items-center justify-between p-4">
           <div className="flex items-center gap-3">
             <div className="grid size-11 place-items-center rounded-2xl bg-sky-100 text-sky-800">
-              <Bell className="size-5" />
+              <Volume2 className="size-5" />
             </div>
             <div>
               <p className="font-bold">
-                {"\uC704\uD5D8 \uD589\uB3D9 \uC54C\uB9BC"}
+                {"\uD070 \uC18C\uC74C \uC54C\uB9BC"}
               </p>
               <p className="text-sm text-slate-500">
                 {
-                  "\uC790\uD574 \uC2DC\uB3C4 \uAE30\uB85D \uC2DC \uC0C1\uB2E8 \uC54C\uB9BC \uD45C\uC2DC"
+                  "\uD070 \uC18C\uC74C\uC774 \uC0DD\uAE30\uBA74 \uC54C\uB9BC\uC744 \uBC1B\uACA0\uC2B5\uB2C8\uAE4C?"
                 }
               </p>
             </div>
           </div>
           <Switch checked={alertsOn} onCheckedChange={onAlertsChange} />
-        </CardContent>
-      </Card>
-
-      <Card className="rounded-2xl border-0 bg-white shadow-sm">
-        <CardContent className="space-y-3 p-4">
-          <p className="font-bold">{"\uB370\uBAA8 \uD658\uACBD"}</p>
-          <div className="rounded-2xl bg-slate-50 p-3 text-sm text-slate-600">
-            {
-              "mock data\uC640 React state\uB9CC \uC0AC\uC6A9\uD558\uB294 \uD074\uB9AD \uAC00\uB2A5\uD55C \uD504\uB860\uD2B8\uC5D4\uB4DC \uD504\uB85C\uD1A0\uD0C0\uC785\uC785\uB2C8\uB2E4."
-            }
-          </div>
         </CardContent>
       </Card>
     </section>
@@ -1462,10 +1738,34 @@ function RecordRow({
             {record.time} · {formatDuration(record.duration)} ·{" "}
             {record.antecedent || "-"}
           </p>
-          {!compact && (
-            <p className="mt-2 line-clamp-2 text-sm text-slate-500">
-              {record.memo || "\uBA54\uBAA8 \uC5C6\uC74C"}
+          {record.mediaAssistEnabled && compact && (
+            <p className="mt-1 text-xs font-bold text-sky-700">
+              {record.mediaStatus === "fallback"
+                ? "\uD14D\uC2A4\uD2B8 \uAE30\uB85D \uBAA8\uB4DC"
+                : "\uC601\uC0C1\u00B7\uC74C\uC131 \uBCF4\uC870 \uD65C\uC131"}
             </p>
+          )}
+          {!compact && (
+            <>
+              <p className="mt-2 line-clamp-2 text-sm text-slate-500">
+                {record.memo || "\uBA54\uBAA8 \uC5C6\uC74C"}
+              </p>
+              {record.mediaAssistEnabled && (
+                <div className="mt-3 space-y-1 rounded-2xl bg-sky-50 p-3 text-sm font-semibold text-sky-800">
+                  <p>
+                    {record.mediaStatus === "fallback"
+                      ? "\uBBF8\uB514\uC5B4 \uD65C\uC131\uD654 \uC2E4\uD328: \uD14D\uC2A4\uD2B8 \uAE30\uB85D \uBAA8\uB4DC\uB85C \uC800\uC7A5\uB428"
+                      : "\uC601\uC0C1\u00B7\uC74C\uC131 \uBCF4\uC870 \uBD84\uC11D \uBA54\uD0C0\uB370\uC774\uD130\uB9CC \uC800\uC7A5\uB428"}
+                  </p>
+                  <p>
+                    {record.detectedBehavior || "\uAC10\uC9C0 \uACB0\uACFC \uC5C6\uC74C"}
+                    {typeof record.confidence === "number"
+                      ? ` · ${Math.round(record.confidence * 100)}%`
+                      : ""}
+                  </p>
+                </div>
+              )}
+            </>
           )}
         </div>
       </CardContent>
@@ -1473,33 +1773,96 @@ function RecordRow({
   );
 }
 
-function MetricCard({
-  label,
-  value,
-  icon,
-  tone,
+function RecordSummaryCard({
+  todayCount,
+  incompleteCount,
 }: {
-  label: string;
-  value: number;
-  icon: ReactNode;
-  tone: "sky" | "mint" | "orange";
+  todayCount: number;
+  incompleteCount: number;
 }) {
-  const toneClass = {
-    sky: "bg-sky-100 text-sky-800",
-    mint: "bg-teal-100 text-teal-800",
-    orange: "bg-orange-100 text-orange-800",
-  }[tone];
-
   return (
     <Card className="rounded-2xl border-0 bg-white shadow-sm">
-      <CardContent className="p-3">
-        <div
-          className={`mb-3 grid size-9 place-items-center rounded-2xl ${toneClass}`}
-        >
-          {icon}
+      <CardContent className="flex h-full flex-col justify-between p-4">
+        <div className="grid size-10 place-items-center rounded-2xl bg-sky-100 text-sky-800">
+          <ClipboardList className="size-5" />
         </div>
-        <p className="text-2xl font-black">{value}</p>
-        <p className="mt-1 text-xs font-semibold text-slate-500">{label}</p>
+        <div className="mt-5 space-y-3">
+          <div>
+            <p className="text-xs font-semibold text-slate-500">
+              {T.todayRecords}
+            </p>
+            <p className="mt-1 text-3xl font-black tabular-nums">
+              {todayCount}
+            </p>
+          </div>
+          <div className="flex items-center justify-between rounded-2xl bg-orange-50 px-3 py-2 text-orange-800">
+            <span className="flex items-center gap-1.5 text-xs font-bold">
+              <Clock3 className="size-3.5" />
+              {T.incomplete}
+            </span>
+            <span className="text-lg font-black tabular-nums">
+              {incompleteCount}
+            </span>
+          </div>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+function WeatherMetricCard({
+  weather,
+  currentTime,
+}: {
+  weather: WeatherInfo;
+  currentTime: Date;
+}) {
+  const temperature =
+    weather.temperature === null ? "--" : `${weather.temperature}\u00B0`;
+  const timeText = currentTime.toLocaleTimeString("ko-KR", {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  });
+  const wind =
+    weather.status === "ready" && weather.windSpeed !== null
+      ? `\uBC14\uB78C ${weather.windSpeed}km/h`
+      : weather.status === "loading"
+        ? "\uC704\uCE58 \uD655\uC778 \uC911"
+        : "\uB0A0\uC528 \uD655\uC778 \uBD88\uAC00";
+
+  return (
+    <Card className="overflow-hidden rounded-2xl border-0 bg-gradient-to-br from-sky-500 via-sky-600 to-indigo-700 text-white shadow-lg shadow-sky-200">
+      <CardContent className="relative min-h-[150px] p-4">
+        <div className="absolute right-3 top-3 text-white/80">
+          {weather.status === "loading" ? (
+            <Thermometer className="size-9 animate-pulse" />
+          ) : (
+            <CloudSun className="size-10" />
+          )}
+        </div>
+        <div className="relative flex h-full min-h-[118px] flex-col justify-between">
+          <div>
+            <div className="flex items-center justify-between gap-2 pr-10">
+              <p className="truncate text-sm font-bold text-white/80">
+                {weather.location}
+              </p>
+              <p className="shrink-0 text-xs font-bold tabular-nums text-white/75">
+                {timeText}
+              </p>
+            </div>
+            <p className="mt-1 text-sm font-semibold text-white/90">
+              {weather.condition}
+            </p>
+          </div>
+          <div>
+            <p className="text-5xl font-black leading-none tracking-normal">
+              {temperature}
+            </p>
+            <p className="mt-2 text-xs font-semibold text-white/80">{wind}</p>
+          </div>
+        </div>
       </CardContent>
     </Card>
   );
@@ -1537,7 +1900,6 @@ function BottomTabs({
 }) {
   const items = [
     { id: "home" as Screen, label: T.home, icon: Home },
-    { id: "record" as Screen, label: T.record, icon: Mic },
     { id: "records" as Screen, label: T.records, icon: FileText },
     { id: "analysis" as Screen, label: T.analysis, icon: BarChart3 },
     { id: "students" as Screen, label: T.students, icon: Users },
@@ -1546,7 +1908,7 @@ function BottomTabs({
 
   return (
     <nav className="fixed bottom-0 left-1/2 z-30 w-full max-w-[430px] -translate-x-1/2 border-t border-slate-200 bg-white/95 backdrop-blur">
-      <div className="grid h-20 grid-cols-6">
+      <div className="grid h-20 grid-cols-5">
         {items.map((item) => {
           const Icon = item.icon;
           const selected =
