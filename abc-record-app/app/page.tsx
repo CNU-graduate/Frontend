@@ -2,6 +2,7 @@
 
 import {
   useEffect,
+  useCallback,
   useMemo,
   useRef,
   useState,
@@ -54,6 +55,17 @@ import { Label } from "@/components/ui/label";
 import { Progress } from "@/components/ui/progress";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
+import { login, signup } from "@/lib/api/authApi";
+import {
+  createStudent,
+  getStudents,
+  type StudentResponse,
+} from "@/lib/api/studentApi";
+import {
+  endSession,
+  startSession,
+  type RecordSession,
+} from "@/lib/api/sessionApi";
 
 type Screen =
   | "login"
@@ -67,10 +79,14 @@ type Screen =
   | "recordStudent"
   | "settings";
 
+type AuthMode = "login" | "signup";
+
 type Student = {
   id: string;
+  apiId: number;
   name: string;
   grade: string;
+  birthDate: string;
   support: string;
   tone: string;
 };
@@ -180,29 +196,7 @@ const T = {
   className: "\uB3C4\uC6C0\uBC18",
 };
 
-const studentsSeed: Student[] = [
-  {
-    id: "stu-1",
-    name: "\uAE40\uBBFC\uC900",
-    grade: "\uCD08 3",
-    support: "\uC804\uD658 \uC0C1\uD669 \uC0AC\uC804 \uC608\uACE0",
-    tone: "bg-sky-100 text-sky-800",
-  },
-  {
-    id: "stu-2",
-    name: "\uC774\uC11C\uC5F0",
-    grade: "\uCD08 4",
-    support: "\uC18C\uC74C \uC790\uADF9 \uC644\uD654",
-    tone: "bg-mint-100 text-teal-800",
-  },
-  {
-    id: "stu-3",
-    name: "\uBC15\uB3C4\uC724",
-    grade: "\uCD08 5",
-    support: "\uAC10\uC815 \uD45C\uD604 \uB300\uCCB4 \uC804\uB7B5",
-    tone: "bg-orange-100 text-orange-800",
-  },
-];
+const studentsSeed: Student[] = [];
 
 const behaviorMeta: Record<
   Behavior,
@@ -262,50 +256,64 @@ const studentToneOptions = [
   "bg-slate-100 text-slate-700",
 ];
 
-const initialRecords: BehaviorRecord[] = [
-  {
-    id: "rec-1",
-    studentId: "stu-1",
-    studentName: "\uAE40\uBBFC\uC900",
-    date: "2026-05-12",
-    time: "09:35",
-    duration: 48,
-    antecedent: "\uD65C\uB3D9 \uC804\uD658",
-    behavior: "leave",
-    consequence: "\uD65C\uB3D9 \uC7AC\uC548\uB0B4",
-    memo: "\uC2DC\uAC01 \uC2A4\uCF00\uC904\uB85C \uB2E4\uC74C \uD65C\uB3D9\uC744 \uC548\uB0B4\uD558\uC790 \uBCF5\uADC0\uD568.",
-    completed: true,
-  },
-  {
-    id: "rec-2",
-    studentId: "stu-2",
-    studentName: "\uC774\uC11C\uC5F0",
-    date: "2026-05-12",
-    time: "10:20",
-    duration: 92,
-    antecedent: "\uC18C\uC74C \uBC1C\uC0DD",
-    behavior: "cry",
-    consequence: "\uC9C4\uC815 \uACF5\uAC04 \uC774\uB3D9",
-    memo: "\uD5E4\uB4DC\uD3F0\uACFC \uC870\uC6A9\uD55C \uC790\uB9AC\uB97C \uC81C\uACF5\uD568.",
-    completed: true,
-  },
-  {
-    id: "rec-3",
-    studentId: "stu-3",
-    studentName: "\uBC15\uB3C4\uC724",
-    date: "2026-05-12",
-    time: "11:10",
-    duration: 37,
-    antecedent: "\uACFC\uC81C \uC81C\uC2DC",
-    behavior: "sound",
-    consequence: "",
-    memo: "\uACFC\uC81C\uB7C9 \uC870\uC815 \uD544\uC694.",
-    completed: false,
-  },
-];
+function mapStudent(student: StudentResponse, index: number): Student {
+  return {
+    id: String(student.studentId),
+    apiId: student.studentId,
+    name: student.name.trim(),
+    grade:
+      typeof student.grade === "number"
+        ? `\uCD08 ${student.grade}`
+        : "\uBBF8\uC785\uB825",
+    birthDate: student.birthDate,
+    support: student.iepSummary?.trim() || "\uC9C0\uC6D0 \uACC4\uD68D \uBBF8\uC785\uB825",
+    tone: studentToneOptions[index % studentToneOptions.length],
+  };
+}
+
+function parseGrade(value: string) {
+  const match = value.match(/\d+/);
+  if (!match) return undefined;
+  const grade = Number(match[0]);
+  return grade >= 1 && grade <= 12 ? grade : undefined;
+}
+
+function apiMessage(error: unknown) {
+  return error instanceof Error
+    ? error.message
+    : "\uC694\uCCAD \uCC98\uB9AC \uC911 \uC624\uB958\uAC00 \uBC1C\uC0DD\uD588\uC2B5\uB2C8\uB2E4.";
+}
+
+function sessionToPendingRecord(session: RecordSession): PendingRecord {
+  const endedAt = session.endedAt ? new Date(session.endedAt) : new Date();
+  const startedAt = new Date(session.startedAt);
+
+  return {
+    id: String(session.sessionId),
+    date: endedAt.toISOString().slice(0, 10),
+    time: endedAt.toLocaleTimeString("ko-KR", {
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+    }),
+    duration: Math.max(session.durationSeconds ?? 1, 1),
+    mediaAssistEnabled: session.mediaAssisted,
+    mediaStatus: session.mediaAssisted ? "active" : "disabled",
+    detectedBehavior: session.mediaAssisted
+      ? "\uC601\uC0C1\u00B7\uC74C\uC131 \uBCF4\uC870 \uC138\uC158"
+      : "\uC218\uB3D9 \uAE30\uB85D \uC138\uC158",
+    confidence: session.mediaAssisted ? 0.72 : 0,
+    startedAt: Number.isNaN(startedAt.getTime())
+      ? session.startedAt
+      : startedAt.toISOString(),
+    endedAt: endedAt.toISOString(),
+  };
+}
+
+const initialRecords: BehaviorRecord[] = [];
 
 function todayString() {
-  return "2026-05-12";
+  return new Date().toISOString().slice(0, 10);
 }
 
 function formatDuration(seconds: number) {
@@ -318,9 +326,7 @@ export default function Page() {
   const [screen, setScreen] = useState<Screen>("login");
   const [students, setStudents] = useState<Student[]>(studentsSeed);
   const [records, setRecords] = useState<BehaviorRecord[]>(initialRecords);
-  const [selectedStudentId, setSelectedStudentId] = useState(
-    studentsSeed[0].id,
-  );
+  const [selectedStudentId, setSelectedStudentId] = useState("");
   const [isRecording, setIsRecording] = useState(false);
   const [elapsed, setElapsed] = useState(0);
   const [draft, setDraft] = useState<DraftRecord | null>(null);
@@ -335,16 +341,31 @@ export default function Page() {
   const [alertsOn, setAlertsOn] = useState(true);
   const [newStudentName, setNewStudentName] = useState("");
   const [newStudentGrade, setNewStudentGrade] = useState("");
+  const [newStudentBirthDate, setNewStudentBirthDate] = useState("");
   const [newStudentSupport, setNewStudentSupport] = useState("");
-  const [teacherName, setTeacherName] = useState(T.teacher);
+  const [authMode, setAuthMode] = useState<AuthMode>("login");
+  const [teacherName, setTeacherName] = useState("");
   const [teacherPassword, setTeacherPassword] = useState("");
+  const [signupName, setSignupName] = useState("");
+  const [signupSchoolName, setSignupSchoolName] = useState("");
+  const [authLoading, setAuthLoading] = useState(false);
+  const [authError, setAuthError] = useState("");
+  const [studentsLoading, setStudentsLoading] = useState(false);
+  const [studentsError, setStudentsError] = useState("");
+  const [studentSaving, setStudentSaving] = useState(false);
+  const [studentError, setStudentError] = useState("");
+  const [sessionLoading, setSessionLoading] = useState(false);
+  const [sessionError, setSessionError] = useState("");
+  const [activeSessionId, setActiveSessionId] = useState<number | null>(null);
   const [mediaAssistStatus, setMediaAssistStatus] =
     useState<MediaAssistStatus>("idle");
   const [mediaStream, setMediaStream] = useState<MediaStream | null>(null);
   const [mediaAssistStartedAt, setMediaAssistStartedAt] = useState("");
 
   const selectedStudent =
-    students.find((student) => student.id === selectedStudentId) ?? students[0];
+    students.find((student) => student.id === selectedStudentId) ??
+    students[0] ??
+    null;
   const todayRecords = records.filter(
     (record) => record.date === todayString(),
   );
@@ -382,6 +403,24 @@ export default function Page() {
     };
   }, [mediaStream]);
 
+  const loadStudents = useCallback(async () => {
+    setStudentsLoading(true);
+    setStudentsError("");
+
+    try {
+      const page = await getStudents({ page: 0, size: 20 });
+      const nextStudents = page.content.map(mapStudent);
+      setStudents(nextStudents);
+      setSelectedStudentId((current) => current || nextStudents[0]?.id || "");
+    } catch (error) {
+      setStudentsError(apiMessage(error));
+      setStudents([]);
+      setSelectedStudentId("");
+    } finally {
+      setStudentsLoading(false);
+    }
+  }, []);
+
   const resetAbc = () => {
     setSelectedA("");
     setSelectedBehavior("");
@@ -390,6 +429,14 @@ export default function Page() {
   };
 
   const handleStartRecording = async () => {
+    if (!selectedStudent) {
+      setSessionError("\uBA3C\uC800 \uD559\uC0DD\uC744 \uB4F1\uB85D\uD558\uAC70\uB098 \uC120\uD0DD\uD574\uC8FC\uC138\uC694.");
+      setScreen("students");
+      return;
+    }
+
+    setSessionLoading(true);
+    setSessionError("");
     setElapsed(0);
     setDraft(null);
     setPendingRecord(null);
@@ -397,47 +444,67 @@ export default function Page() {
     setMediaAssistStatus("active");
     setMediaAssistStartedAt(new Date().toISOString());
     resetAbc();
-    setIsRecording(true);
     setScreen("record");
+
+    let nextStream: MediaStream | null = null;
+    let nextMediaStatus: MediaAssistStatus = "active";
 
     try {
       mediaStream?.getTracks().forEach((track) => track.stop());
-      const stream = await navigator.mediaDevices.getUserMedia({
+      nextStream = await navigator.mediaDevices.getUserMedia({
         audio: true,
         video: true,
       });
-      setMediaStream(stream);
-      setMediaAssistStatus("active");
     } catch {
+      nextStream = null;
+      nextMediaStatus = "fallback";
+    }
+
+    try {
+      const session = await startSession(selectedStudent.apiId, {
+        triggerType: "MANUAL",
+        mediaAssisted: nextMediaStatus === "active",
+      });
+      setActiveSessionId(session.sessionId);
+      setMediaStream(nextStream);
+      setMediaAssistStatus(nextMediaStatus);
+      setMediaAssistStartedAt(session.startedAt);
+      setIsRecording(true);
+    } catch (error) {
+      nextStream?.getTracks().forEach((track) => track.stop());
       setMediaStream(null);
-      setMediaAssistStatus("fallback");
+      setIsRecording(false);
+      setMediaAssistStatus("idle");
+      setSessionError(apiMessage(error));
+    } finally {
+      setSessionLoading(false);
     }
   };
 
-  const handleEndRecording = () => {
+  const handleEndRecording = async () => {
+    if (!activeSessionId) {
+      setSessionError("\uC9C4\uD589 \uC911\uC778 \uC138\uC158 ID\uB97C \uCC3E\uC744 \uC218 \uC5C6\uC2B5\uB2C8\uB2E4.");
+      return;
+    }
+
+    setSessionLoading(true);
+    setSessionError("");
     const now = new Date();
     mediaStream?.getTracks().forEach((track) => track.stop());
     setMediaStream(null);
-    setPendingRecord({
-      id: `rec-${records.length + 1}`,
-      date: todayString(),
-      time: now.toLocaleTimeString("ko-KR", {
-        hour: "2-digit",
-        minute: "2-digit",
-        hour12: false,
-      }),
-      duration: Math.max(elapsed, 1),
-      mediaAssistEnabled: mediaAssistStatus !== "disabled",
-      mediaStatus:
-        mediaAssistStatus === "idle" ? "disabled" : mediaAssistStatus,
-      detectedBehavior:
-        mediaAssistStatus === "fallback" ? "\uD14D\uC2A4\uD2B8 \uAE30\uB85D \uBAA8\uB4DC" : "\uC18C\uC74C \uC0C1\uC2B9 \uD328\uD134",
-      confidence: mediaAssistStatus === "fallback" ? 0 : 0.72,
-      startedAt: mediaAssistStartedAt || now.toISOString(),
-      endedAt: now.toISOString(),
-    });
-    setIsRecording(false);
-    setScreen("recordStudent");
+
+    try {
+      const session = await endSession(activeSessionId);
+      setPendingRecord(sessionToPendingRecord(session));
+      setActiveSessionId(null);
+      setIsRecording(false);
+      setScreen("recordStudent");
+    } catch (error) {
+      setSessionError(apiMessage(error));
+      setMediaAssistStartedAt(mediaAssistStartedAt || now.toISOString());
+    } finally {
+      setSessionLoading(false);
+    }
   };
 
   const handleSelectRecordedStudent = (studentId: string) => {
@@ -511,38 +578,101 @@ export default function Page() {
   const handleOpenNewStudent = () => {
     setNewStudentName("");
     setNewStudentGrade("");
+    setNewStudentBirthDate("");
     setNewStudentSupport("");
+    setStudentError("");
     setScreen("newStudent");
   };
 
-  const handleSaveStudent = (event: FormEvent<HTMLFormElement>) => {
+  const handleSaveStudent = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
 
     const name = newStudentName.trim();
-    if (!name) return;
+    const birthDate = newStudentBirthDate.trim();
+    if (!name || !birthDate) return;
 
-    const nextStudent: Student = {
-      id: `stu-${Date.now()}`,
-      name,
-      grade: newStudentGrade.trim() || "\uBBF8\uC785\uB825",
-      support:
-        newStudentSupport.trim() ||
-        "\uC9C0\uC6D0 \uACC4\uD68D \uBBF8\uC785\uB825",
-      tone: studentToneOptions[students.length % studentToneOptions.length],
-    };
+    setStudentSaving(true);
+    setStudentError("");
 
-    setStudents((current) => [...current, nextStudent]);
-    setSelectedStudentId(nextStudent.id);
-    setNewStudentName("");
-    setNewStudentGrade("");
-    setNewStudentSupport("");
-    setScreen("students");
+    try {
+      const created = await createStudent({
+        name,
+        birthDate,
+        grade: parseGrade(newStudentGrade),
+        iepSummary: newStudentSupport.trim() || undefined,
+      });
+      const nextStudent = mapStudent(created, students.length);
+
+      setStudents((current) => [...current, nextStudent]);
+      setSelectedStudentId(nextStudent.id);
+      setNewStudentName("");
+      setNewStudentGrade("");
+      setNewStudentBirthDate("");
+      setNewStudentSupport("");
+      setScreen("students");
+    } catch (error) {
+      setStudentError(apiMessage(error));
+    } finally {
+      setStudentSaving(false);
+    }
   };
 
-  const handleLogin = (event: FormEvent<HTMLFormElement>) => {
+  const handleLogin = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!teacherName.trim() || !teacherPassword.trim()) return;
-    setScreen("home");
+
+    setAuthLoading(true);
+    setAuthError("");
+
+    try {
+      const result = await login({
+        email: teacherName.trim(),
+        password: teacherPassword,
+      });
+      setTeacherName(result.teacher.name.trim() || result.teacher.email);
+      setTeacherPassword("");
+      setScreen("home");
+      await loadStudents();
+    } catch (error) {
+      setAuthError(apiMessage(error));
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
+  const handleSignup = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!teacherName.trim() || !teacherPassword.trim() || !signupName.trim()) {
+      return;
+    }
+
+    setAuthLoading(true);
+    setAuthError("");
+
+    try {
+      const result = await signup({
+        email: teacherName.trim(),
+        password: teacherPassword,
+        name: signupName.trim(),
+        schoolName: signupSchoolName.trim() || undefined,
+      });
+      setTeacherName(result.teacher.name.trim() || result.teacher.email);
+      setTeacherPassword("");
+      setSignupName("");
+      setSignupSchoolName("");
+      setScreen("home");
+      await loadStudents();
+    } catch (error) {
+      setAuthError(apiMessage(error));
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
+  const handleAuthModeChange = (mode: AuthMode) => {
+    setAuthMode(mode);
+    setAuthError("");
+    setTeacherPassword("");
   };
 
   const currentTitle =
@@ -593,11 +723,20 @@ export default function Page() {
         >
           {screen === "login" && (
             <LoginScreen
+              mode={authMode}
               teacherName={teacherName}
               password={teacherPassword}
+              signupName={signupName}
+              signupSchoolName={signupSchoolName}
+              loading={authLoading}
+              error={authError}
+              onModeChange={handleAuthModeChange}
               onTeacherNameChange={setTeacherName}
               onPasswordChange={setTeacherPassword}
+              onSignupNameChange={setSignupName}
+              onSignupSchoolNameChange={setSignupSchoolName}
               onLogin={handleLogin}
+              onSignup={handleSignup}
             />
           )}
           {screen === "home" && (
@@ -605,18 +744,22 @@ export default function Page() {
               todayCount={todayRecords.length}
               incompleteCount={incompleteRecords.length}
               records={records}
+              loading={sessionLoading}
+              error={sessionError || studentsError}
               onStart={handleStartRecording}
               onNavigate={setScreen}
               onEditDraft={handleEditDraft}
             />
           )}
-          {screen === "record" && (
+          {screen === "record" && selectedStudent && (
             <RecordScreen
               students={students}
               selectedStudentId={selectedStudentId}
               selectedStudent={selectedStudent}
               elapsed={elapsed}
               isRecording={isRecording}
+              loading={sessionLoading}
+              error={sessionError}
               mediaAssistStatus={mediaAssistStatus}
               mediaStream={mediaStream}
               onSelectStudent={setSelectedStudentId}
@@ -664,16 +807,23 @@ export default function Page() {
             <StudentScreen
               students={students}
               records={records}
+              loading={studentsLoading}
+              error={studentsError}
               onAdd={handleOpenNewStudent}
+              onRetry={loadStudents}
             />
           )}
           {screen === "newStudent" && (
             <NewStudentScreen
               name={newStudentName}
               grade={newStudentGrade}
+              birthDate={newStudentBirthDate}
               support={newStudentSupport}
+              loading={studentSaving}
+              error={studentError}
               onNameChange={setNewStudentName}
               onGradeChange={setNewStudentGrade}
+              onBirthDateChange={setNewStudentBirthDate}
               onSupportChange={setNewStudentSupport}
               onCancel={() => setScreen("students")}
               onSave={handleSaveStudent}
@@ -691,18 +841,38 @@ export default function Page() {
 }
 
 function LoginScreen({
+  mode,
   teacherName,
   password,
+  signupName,
+  signupSchoolName,
+  loading,
+  error,
+  onModeChange,
   onTeacherNameChange,
   onPasswordChange,
+  onSignupNameChange,
+  onSignupSchoolNameChange,
   onLogin,
+  onSignup,
 }: {
+  mode: AuthMode;
   teacherName: string;
   password: string;
+  signupName: string;
+  signupSchoolName: string;
+  loading: boolean;
+  error: string;
+  onModeChange: (mode: AuthMode) => void;
   onTeacherNameChange: (value: string) => void;
   onPasswordChange: (value: string) => void;
+  onSignupNameChange: (value: string) => void;
+  onSignupSchoolNameChange: (value: string) => void;
   onLogin: (event: FormEvent<HTMLFormElement>) => void;
+  onSignup: (event: FormEvent<HTMLFormElement>) => void;
 }) {
+  const isSignup = mode === "signup";
+
   return (
     <section className="flex min-h-dvh flex-col justify-center py-8">
       <div className="mb-8 space-y-5">
@@ -712,29 +882,90 @@ function LoginScreen({
         <div>
           <p className="text-sm font-bold text-teal-700">{T.className}</p>
           <h1 className="mt-2 text-3xl font-black tracking-normal text-slate-950">
-            {T.loginTitle}
+            {isSignup ? "\uD2B9\uC218\uAD50\uC0AC \uD68C\uC6D0\uAC00\uC785" : T.loginTitle}
           </h1>
           <p className="mt-3 text-sm leading-6 text-slate-500">
-            {T.loginSubtitle}
+            {isSignup
+              ? "\uD559\uC0DD \uD589\uB3D9 \uAE30\uB85D\uC744 \uAD00\uB9AC\uD560 \uAD50\uC0AC \uACC4\uC815\uC744 \uB9CC\uB4DC\uC138\uC694."
+              : T.loginSubtitle}
           </p>
         </div>
       </div>
 
-      <form className="space-y-4" onSubmit={onLogin}>
+      <div className="mb-4 grid grid-cols-2 rounded-2xl bg-slate-100 p-1">
+        <Button
+          type="button"
+          variant={mode === "login" ? "default" : "ghost"}
+          className={`h-11 rounded-xl font-bold ${
+            mode === "login"
+              ? "bg-white text-sky-800 shadow-sm hover:bg-white"
+              : "text-slate-500 hover:bg-transparent"
+          }`}
+          onClick={() => onModeChange("login")}
+        >
+          {"\uB85C\uADF8\uC778"}
+        </Button>
+        <Button
+          type="button"
+          variant={mode === "signup" ? "default" : "ghost"}
+          className={`h-11 rounded-xl font-bold ${
+            mode === "signup"
+              ? "bg-white text-sky-800 shadow-sm hover:bg-white"
+              : "text-slate-500 hover:bg-transparent"
+          }`}
+          onClick={() => onModeChange("signup")}
+        >
+          {"\uD68C\uC6D0\uAC00\uC785"}
+        </Button>
+      </div>
+
+      <form className="space-y-4" onSubmit={isSignup ? onSignup : onLogin}>
         <Card className="rounded-2xl border-0 bg-white shadow-sm">
           <CardContent className="space-y-4 p-4">
             <div className="space-y-2">
-              <Label htmlFor="teacher-name">{"\uAD50\uC0AC\uBA85"}</Label>
+              <Label htmlFor="teacher-name">{"\uC774\uBA54\uC77C"}</Label>
               <Input
                 id="teacher-name"
+                type="email"
                 value={teacherName}
                 onChange={(event) => onTeacherNameChange(event.target.value)}
-                placeholder={"\uC608: \uAE40\uC120\uC0DD\uB2D8"}
+                placeholder="teacher@school.kr"
                 className="h-12 rounded-2xl bg-slate-50"
                 autoFocus
                 required
               />
             </div>
+
+            {isSignup && (
+              <>
+                <div className="space-y-2">
+                  <Label htmlFor="signup-name">{"\uC774\uB984"}</Label>
+                  <Input
+                    id="signup-name"
+                    value={signupName}
+                    onChange={(event) =>
+                      onSignupNameChange(event.target.value)
+                    }
+                    placeholder={"\uC608: \uAE40\uBBFC\uB098"}
+                    className="h-12 rounded-2xl bg-slate-50"
+                    required
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="signup-school">{"\uD559\uAD50\uBA85"}</Label>
+                  <Input
+                    id="signup-school"
+                    value={signupSchoolName}
+                    onChange={(event) =>
+                      onSignupSchoolNameChange(event.target.value)
+                    }
+                    placeholder={"\uC608: \uD55C\uBE5B\uD2B9\uC218\uD559\uAD50"}
+                    className="h-12 rounded-2xl bg-slate-50"
+                  />
+                </div>
+              </>
+            )}
 
             <div className="space-y-2">
               <Label htmlFor="teacher-password">{"\uBE44\uBC00\uBC88\uD638"}</Label>
@@ -751,13 +982,30 @@ function LoginScreen({
           </CardContent>
         </Card>
 
+        {error && (
+          <p className="rounded-2xl bg-rose-50 px-4 py-3 text-sm font-semibold text-rose-700">
+            {error}
+          </p>
+        )}
+
         <Button
           type="submit"
           className="h-14 w-full rounded-2xl bg-sky-700 text-base font-bold text-white shadow-lg shadow-sky-100 hover:bg-sky-800"
-          disabled={!teacherName.trim() || !password.trim()}
+          disabled={
+            loading ||
+            !teacherName.trim() ||
+            !password.trim() ||
+            (isSignup && !signupName.trim())
+          }
         >
           <LogIn className="mr-2 size-5" />
-          {"\uB85C\uADF8\uC778"}
+          {loading
+            ? isSignup
+              ? "\uAC00\uC785 \uC911"
+              : "\uB85C\uADF8\uC778 \uC911"
+            : isSignup
+              ? "\uD68C\uC6D0\uAC00\uC785"
+              : "\uB85C\uADF8\uC778"}
         </Button>
       </form>
     </section>
@@ -809,6 +1057,8 @@ function HomeScreen({
   todayCount,
   incompleteCount,
   records,
+  loading,
+  error,
   onStart,
   onNavigate,
   onEditDraft,
@@ -816,6 +1066,8 @@ function HomeScreen({
   todayCount: number;
   incompleteCount: number;
   records: BehaviorRecord[];
+  loading: boolean;
+  error: string;
   onStart: () => void;
   onNavigate: (screen: Screen) => void;
   onEditDraft: (record: BehaviorRecord) => void;
@@ -923,10 +1175,17 @@ function HomeScreen({
         type="button"
         onClick={onStart}
         className="h-16 w-full rounded-2xl bg-sky-700 text-base font-bold text-white shadow-lg shadow-sky-100 hover:bg-sky-800"
+        disabled={loading}
       >
         <Play className="mr-2 size-5 fill-white" />
-        {T.startNow}
+        {loading ? "\uCC98\uB9AC \uC911" : T.startNow}
       </Button>
+
+      {error && (
+        <p className="rounded-2xl bg-rose-50 px-4 py-3 text-sm font-semibold text-rose-700">
+          {error}
+        </p>
+      )}
 
       <Card className="rounded-2xl border-0 bg-white shadow-sm">
         <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-3">
@@ -942,6 +1201,11 @@ function HomeScreen({
           </Button>
         </CardHeader>
         <CardContent className="space-y-3">
+          {records.length === 0 && (
+            <p className="rounded-2xl bg-slate-50 px-4 py-5 text-center text-sm font-semibold text-slate-500">
+              {"\uC544\uC9C1 \uC791\uC131\uB41C ABC \uAE30\uB85D\uC774 \uC5C6\uC2B5\uB2C8\uB2E4."}
+            </p>
+          )}
           {records.slice(0, 3).map((record) => (
             <RecordRow
               key={record.id}
@@ -963,6 +1227,8 @@ function RecordScreen({
   selectedStudent,
   elapsed,
   isRecording,
+  loading,
+  error,
   mediaAssistStatus,
   mediaStream,
   onSelectStudent,
@@ -975,6 +1241,8 @@ function RecordScreen({
   selectedStudent: Student;
   elapsed: number;
   isRecording: boolean;
+  loading: boolean;
+  error: string;
   mediaAssistStatus: MediaAssistStatus;
   mediaStream: MediaStream | null;
   onSelectStudent: (id: string) => void;
@@ -1065,19 +1333,26 @@ function RecordScreen({
               type="button"
               className="h-14 w-full rounded-2xl bg-white font-bold text-sky-800 hover:bg-sky-50"
               onClick={onStart}
+              disabled={loading}
             >
               <Play className="mr-2 size-5 fill-sky-800" />
-              {T.startRecord}
+              {loading ? "\uC138\uC158 \uC2DC\uC791 \uC911" : T.startRecord}
             </Button>
           ) : (
             <Button
               type="button"
               className="h-14 w-full rounded-2xl bg-orange-400 font-bold text-white hover:bg-orange-500"
               onClick={onEnd}
+              disabled={loading}
             >
               <Square className="mr-2 size-5 fill-white" />
-              {T.endBehavior}
+              {loading ? "\uC138\uC158 \uC885\uB8CC \uC911" : T.endBehavior}
             </Button>
+          )}
+          {error && (
+            <p className="rounded-2xl bg-rose-50 px-4 py-3 text-sm font-semibold text-rose-700">
+              {error}
+            </p>
           )}
           {isRecording && isFallback && (
             <p className="text-sm font-semibold text-orange-100">
@@ -1451,11 +1726,17 @@ function AnalysisScreen({
 function StudentScreen({
   students,
   records,
+  loading,
+  error,
   onAdd,
+  onRetry,
 }: {
   students: Student[];
   records: BehaviorRecord[];
+  loading: boolean;
+  error: string;
   onAdd: () => void;
+  onRetry: () => void;
 }) {
   return (
     <section className="space-y-4 pt-4">
@@ -1467,6 +1748,29 @@ function StudentScreen({
         <Plus className="mr-2 size-5" />
         {"\uD559\uC0DD \uCD94\uAC00"}
       </Button>
+      {loading && (
+        <p className="rounded-2xl bg-sky-50 px-4 py-5 text-center text-sm font-semibold text-sky-700">
+          {"\uD559\uC0DD \uBAA9\uB85D\uC744 \uBD88\uB7EC\uC624\uB294 \uC911\uC785\uB2C8\uB2E4."}
+        </p>
+      )}
+      {error && (
+        <div className="space-y-3 rounded-2xl bg-rose-50 p-4 text-sm font-semibold text-rose-700">
+          <p>{error}</p>
+          <Button
+            type="button"
+            variant="outline"
+            className="h-10 rounded-2xl bg-white"
+            onClick={onRetry}
+          >
+            {"\uB2E4\uC2DC \uC2DC\uB3C4"}
+          </Button>
+        </div>
+      )}
+      {!loading && !error && students.length === 0 && (
+        <p className="rounded-2xl bg-slate-50 px-4 py-5 text-center text-sm font-semibold text-slate-500">
+          {"\uB4F1\uB85D\uB41C \uD559\uC0DD\uC774 \uC5C6\uC2B5\uB2C8\uB2E4."}
+        </p>
+      )}
       {students.map((student) => {
         const count = records.filter(
           (record) => record.studentId === student.id,
@@ -1503,18 +1807,26 @@ function StudentScreen({
 function NewStudentScreen({
   name,
   grade,
+  birthDate,
   support,
+  loading,
+  error,
   onNameChange,
   onGradeChange,
+  onBirthDateChange,
   onSupportChange,
   onCancel,
   onSave,
 }: {
   name: string;
   grade: string;
+  birthDate: string;
   support: string;
+  loading: boolean;
+  error: string;
   onNameChange: (value: string) => void;
   onGradeChange: (value: string) => void;
+  onBirthDateChange: (value: string) => void;
   onSupportChange: (value: string) => void;
   onCancel: () => void;
   onSave: (event: FormEvent<HTMLFormElement>) => void;
@@ -1553,6 +1865,18 @@ function NewStudentScreen({
           </div>
 
           <div className="space-y-2">
+            <Label htmlFor="student-birth-date">{"\uC0DD\uB144\uC6D4\uC77C"}</Label>
+            <Input
+              id="student-birth-date"
+              type="date"
+              value={birthDate}
+              onChange={(event) => onBirthDateChange(event.target.value)}
+              className="h-12 rounded-2xl bg-slate-50"
+              required
+            />
+          </div>
+
+          <div className="space-y-2">
             <Label htmlFor="student-support">
               {"\uC9C0\uC6D0 \uBA54\uBAA8"}
             </Label>
@@ -1569,22 +1893,29 @@ function NewStudentScreen({
         </CardContent>
       </Card>
 
+      {error && (
+        <p className="rounded-2xl bg-rose-50 px-4 py-3 text-sm font-semibold text-rose-700">
+          {error}
+        </p>
+      )}
+
       <div className="grid grid-cols-2 gap-3">
         <Button
           type="button"
           variant="outline"
           className="h-12 rounded-2xl font-bold"
           onClick={onCancel}
+          disabled={loading}
         >
           {"\uCDE8\uC18C"}
         </Button>
         <Button
           type="submit"
           className="h-12 rounded-2xl bg-orange-400 font-bold text-white hover:bg-orange-500"
-          disabled={!name.trim()}
+          disabled={loading || !name.trim() || !birthDate.trim()}
         >
           <Check className="mr-2 size-5" />
-          {"\uC800\uC7A5"}
+          {loading ? "\uC800\uC7A5 \uC911" : "\uC800\uC7A5"}
         </Button>
       </div>
     </form>
