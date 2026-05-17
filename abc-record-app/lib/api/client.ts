@@ -49,9 +49,9 @@ function clearTokens() {
 }
 
 async function parseResponse<T>(response: Response): Promise<T> {
-  const body = (await response.json().catch(() => null)) as
-    | ApiResponse<T>
-    | null;
+  const body = (await response
+    .json()
+    .catch(() => null)) as ApiResponse<T> | null;
 
   if (!response.ok || !body?.success) {
     const message =

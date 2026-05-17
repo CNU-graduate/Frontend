@@ -1,4 +1,5 @@
-import { apiClient } from "./client";
+import { apiCall } from "./client";
+import { PageResponse } from "./studentApi";
 
 export type TriggerType = "SWIPE" | "MANUAL" | "NOISE";
 export type SessionStatus =
@@ -20,54 +21,53 @@ export type RecordSession = {
   mediaAssisted: boolean;
 };
 
-export type SessionPageResponse = {
-  content: RecordSession[];
-  page: number;
-  size: number;
-  totalElements: number;
-  totalPages: number;
-  first: boolean;
-  last: boolean;
-};
-
-export function startSession(
-  studentId: number | string,
-  request: { triggerType: TriggerType; mediaAssisted?: boolean },
+export async function startSession(
+  studentId: number,
+  data: {
+    triggerType: TriggerType;
+    mediaAssisted?: boolean;
+  },
 ) {
-  return apiClient.post<RecordSession>(
-    `/api/v1/students/${studentId}/sessions`,
-    request,
-  );
-}
-
-export function endSession(sessionId: number | string) {
-  return apiClient.post<RecordSession>(`/api/v1/sessions/${sessionId}/end`);
-}
-
-export function abandonSession(
-  sessionId: number | string,
-  request?: { lastValidAt?: string },
-) {
-  return apiClient.post<RecordSession>(
-    `/api/v1/sessions/${sessionId}/abandon`,
-    request,
-  );
-}
-
-export function getStudentSessions(
-  studentId: number | string,
-  params: { page?: number; size?: number } = {},
-) {
-  const searchParams = new URLSearchParams({
-    page: String(params.page ?? 0),
-    size: String(params.size ?? 20),
+  return apiCall<RecordSession>(`/api/v1/students/${studentId}/sessions`, {
+    method: "POST",
+    body: JSON.stringify(data),
   });
+}
 
-  return apiClient.get<SessionPageResponse>(
+export async function endSession(sessionId: number) {
+  return apiCall<RecordSession>(`/api/v1/sessions/${sessionId}/end`, {
+    method: "POST",
+  });
+}
+
+export async function abandonSession(
+  sessionId: number,
+  data?: {
+    lastValidAt?: string;
+  },
+) {
+  return apiCall<RecordSession>(`/api/v1/sessions/${sessionId}/abandon`, {
+    method: "POST",
+    body: data ? JSON.stringify(data) : undefined,
+  });
+}
+
+export async function getStudentSessions(
+  studentId: number,
+  params?: {
+    page?: number;
+    size?: number;
+  },
+) {
+  const searchParams = new URLSearchParams();
+  searchParams.set("page", String(params?.page ?? 0));
+  searchParams.set("size", String(params?.size ?? 20));
+
+  return apiCall<PageResponse<RecordSession>>(
     `/api/v1/students/${studentId}/sessions?${searchParams.toString()}`,
   );
 }
 
-export function getSession(sessionId: number | string) {
-  return apiClient.get<RecordSession>(`/api/v1/sessions/${sessionId}`);
+export async function getSession(sessionId: number) {
+  return apiCall<RecordSession>(`/api/v1/sessions/${sessionId}`);
 }

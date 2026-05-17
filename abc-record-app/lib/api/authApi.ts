@@ -1,11 +1,11 @@
-import { apiClient, storeTokens } from "./client";
+import { apiCall } from "./client";
 
 export type Teacher = {
   teacherId: number;
   email: string;
   name: string;
-  schoolName?: string | null;
-  role: string;
+  schoolName?: string;
+  role: "TEACHER" | "ADMIN";
   createdAt: string;
 };
 
@@ -16,34 +16,25 @@ export type AuthResponse = {
   teacher: Teacher;
 };
 
-export type LoginRequest = {
+export async function login(data: { email: string; password: string }) {
+  return apiCall<AuthResponse>("/api/v1/auth/login", {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+}
+
+export async function signup(data: {
   email: string;
   password: string;
-};
-
-export type SignupRequest = LoginRequest & {
   name: string;
   schoolName?: string;
-};
-
-export async function login(request: LoginRequest) {
-  const result = await apiClient.post<AuthResponse>(
-    "/api/v1/auth/login",
-    request,
-  );
-  storeTokens(result);
-  return result;
+}) {
+  return apiCall<AuthResponse>("/api/v1/auth/signup", {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
 }
 
-export async function signup(request: SignupRequest) {
-  const result = await apiClient.post<AuthResponse>(
-    "/api/v1/auth/signup",
-    request,
-  );
-  storeTokens(result);
-  return result;
-}
-
-export function getMe() {
-  return apiClient.get<Teacher>("/api/v1/auth/me");
+export async function getMe() {
+  return apiCall<Teacher>("/api/v1/auth/me");
 }
