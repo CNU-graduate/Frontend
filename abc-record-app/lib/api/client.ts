@@ -141,4 +141,6 @@ export const apiClient = {
     }),
 };
 
+export const apiCall = request;
+
 export { clearTokens, storeTokens };

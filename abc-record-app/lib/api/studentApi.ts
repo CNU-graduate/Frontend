@@ -5,6 +5,7 @@ export type StudentSummary = {
   name: string;
   grade?: number;
   birthDate: string;
+  iepSummary?: string;
 };
 
 export type StudentDetail = {
@@ -17,6 +18,8 @@ export type StudentDetail = {
   createdAt: string;
   updatedAt: string;
 };
+
+export type StudentResponse = StudentSummary | StudentDetail;
 
 export type PageResponse<T> = {
   content: T[];

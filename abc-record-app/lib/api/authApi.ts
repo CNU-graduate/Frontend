@@ -1,4 +1,4 @@
-import { apiCall } from "./client";
+import { apiCall, storeTokens } from "./client";
 
 export type Teacher = {
   teacherId: number;
@@ -17,10 +17,12 @@ export type AuthResponse = {
 };
 
 export async function login(data: { email: string; password: string }) {
-  return apiCall<AuthResponse>("/api/v1/auth/login", {
+  const response = await apiCall<AuthResponse>("/api/v1/auth/login", {
     method: "POST",
     body: JSON.stringify(data),
   });
+  storeTokens(response);
+  return response;
 }
 
 export async function signup(data: {
@@ -29,10 +31,12 @@ export async function signup(data: {
   name: string;
   schoolName?: string;
 }) {
-  return apiCall<AuthResponse>("/api/v1/auth/signup", {
+  const response = await apiCall<AuthResponse>("/api/v1/auth/signup", {
     method: "POST",
     body: JSON.stringify(data),
   });
+  storeTokens(response);
+  return response;
 }
 
 export async function getMe() {
