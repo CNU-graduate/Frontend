@@ -29,6 +29,7 @@ import {
   ShieldCheck,
   Square,
   Thermometer,
+  Trash2,
   UserRound,
   Users,
   Volume2,
@@ -644,6 +645,17 @@ export default function Page() {
     setScreen("abc");
   };
 
+  const handleDeleteRecord = (record: BehaviorRecord) => {
+    const confirmed = window.confirm(
+      `${record.studentName} 학생의 행동 기록을 삭제하시겠습니까?`,
+    );
+    if (!confirmed) return;
+
+    setRecords((current) =>
+      current.filter((item) => item.id !== record.id),
+    );
+  };
+
   const handleOpenNewStudent = () => {
     setEditingStudentId(null);
     setNewStudentName("");
@@ -847,7 +859,13 @@ export default function Page() {
         {screen !== "login" && (
           <AppHeader
             title={currentTitle}
-            subtitle={screen === "home" ? teacherName : className}
+            subtitle={
+              screen === "home"
+                ? teacherName.endsWith("\uC120\uC0DD\uB2D8")
+                  ? teacherName
+                  : `${teacherName} \uC120\uC0DD\uB2D8`
+                : className
+            }
             showBack={screen !== "home"}
             onBack={() => {
               if (screen === "newStudent") {
@@ -900,6 +918,7 @@ export default function Page() {
               onStart={handleStartRecording}
               onNavigate={setScreen}
               onEditDraft={handleEditDraft}
+              onDeleteRecord={handleDeleteRecord}
             />
           )}
           {screen === "record" && selectedStudent && (
@@ -951,7 +970,11 @@ export default function Page() {
             />
           )}
           {screen === "records" && (
-            <RecordListScreen records={records} onEditDraft={handleEditDraft} />
+            <RecordListScreen
+              records={records}
+              onEditDraft={handleEditDraft}
+              onDeleteRecord={handleDeleteRecord}
+            />
           )}
           {screen === "analysis" && (
             <AnalysisScreen
@@ -1262,6 +1285,7 @@ function HomeScreen({
   onStart,
   onNavigate,
   onEditDraft,
+  onDeleteRecord,
 }: {
   todayCount: number;
   incompleteCount: number;
@@ -1271,6 +1295,7 @@ function HomeScreen({
   onStart: () => void;
   onNavigate: (screen: Screen) => void;
   onEditDraft: (record: BehaviorRecord) => void;
+  onDeleteRecord: (record: BehaviorRecord) => void;
 }) {
   const [weather, setWeather] = useState<WeatherInfo>({
     temperature: null,
@@ -1412,6 +1437,7 @@ function HomeScreen({
               record={record}
               compact
               onEditDraft={onEditDraft}
+              onDeleteRecord={onDeleteRecord}
             />
           ))}
         </CardContent>
@@ -1806,14 +1832,21 @@ function RecordedStudentScreen({
 function RecordListScreen({
   records,
   onEditDraft,
+  onDeleteRecord,
 }: {
   records: BehaviorRecord[];
   onEditDraft: (record: BehaviorRecord) => void;
+  onDeleteRecord: (record: BehaviorRecord) => void;
 }) {
   return (
     <section className="space-y-3 pt-4">
       {records.map((record) => (
-        <RecordRow key={record.id} record={record} onEditDraft={onEditDraft} />
+        <RecordRow
+          key={record.id}
+          record={record}
+          onEditDraft={onEditDraft}
+          onDeleteRecord={onDeleteRecord}
+        />
       ))}
     </section>
   );
@@ -2273,10 +2306,12 @@ function RecordRow({
   record,
   compact = false,
   onEditDraft,
+  onDeleteRecord,
 }: {
   record: BehaviorRecord;
   compact?: boolean;
   onEditDraft?: (record: BehaviorRecord) => void;
+  onDeleteRecord?: (record: BehaviorRecord) => void;
 }) {
   const meta = behaviorMeta[record.behavior];
   return (
@@ -2302,6 +2337,19 @@ function RecordRow({
                   onClick={() => onEditDraft(record)}
                 >
                   {T.editDraft}
+                </Button>
+              )}
+              {onDeleteRecord && (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="h-7 rounded-full px-2 text-xs text-rose-600 hover:bg-rose-50 hover:text-rose-700"
+                  onClick={() => onDeleteRecord(record)}
+                  aria-label={`${record.studentName} 행동 기록 삭제`}
+                >
+                  <Trash2 className="size-3.5" />
+                  {!compact && <span className="ml-1">{"\uC0AD\uC81C"}</span>}
                 </Button>
               )}
               <Badge
