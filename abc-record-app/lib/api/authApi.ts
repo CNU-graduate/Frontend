@@ -5,6 +5,7 @@ export type Teacher = {
   email: string;
   name: string;
   schoolName?: string;
+  className?: string;
   role: "TEACHER" | "ADMIN";
   createdAt: string;
 };
@@ -30,13 +31,12 @@ export async function signup(data: {
   password: string;
   name: string;
   schoolName?: string;
+  className?: string;
 }) {
-  const response = await apiCall<AuthResponse>("/api/v1/auth/signup", {
+  return apiCall<AuthResponse>("/api/v1/auth/signup", {
     method: "POST",
     body: JSON.stringify(data),
   });
-  storeTokens(response);
-  return response;
 }
 
 export async function getMe() {

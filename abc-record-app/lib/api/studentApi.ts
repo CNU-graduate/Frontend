@@ -6,6 +6,7 @@ export type StudentSummary = {
   grade?: number;
   birthDate: string;
   iepSummary?: string;
+  metadata?: Record<string, unknown>;
 };
 
 export type StudentDetail = {

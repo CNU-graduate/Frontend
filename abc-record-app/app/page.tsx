@@ -10,7 +10,6 @@ import {
   type ReactNode,
 } from "react";
 import {
-  Activity,
   BarChart3,
   BookOpenCheck,
   Camera,
@@ -58,7 +57,9 @@ import { Textarea } from "@/components/ui/textarea";
 import { login, signup } from "@/lib/api/authApi";
 import {
   createStudent,
+  getStudent,
   getStudents,
+  updateStudent,
   type StudentResponse,
 } from "@/lib/api/studentApi";
 import {
@@ -87,11 +88,13 @@ type Student = {
   name: string;
   grade: string;
   birthDate: string;
+  disability: string;
   support: string;
+  metadata: Record<string, unknown>;
   tone: string;
 };
 
-type Behavior = "sound" | "leave" | "throw" | "cry" | "selfHarm";
+type Behavior = "sound" | "leave" | "throw" | "cry" | "selfHarm" | "other";
 type MediaAssistStatus = "idle" | "active" | "fallback" | "disabled";
 type StoredMediaStatus = Exclude<MediaAssistStatus, "idle">;
 
@@ -103,8 +106,11 @@ type BehaviorRecord = {
   time: string;
   duration: number;
   antecedent: string;
+  customAntecedent?: string;
   behavior: Behavior;
+  customBehavior?: string;
   consequence: string;
+  customConsequence?: string;
   memo: string;
   completed: boolean;
   mediaAssistEnabled?: boolean;
@@ -193,7 +199,6 @@ const T = {
   draft: "\uBBF8\uC644\uB8CC",
   seconds: "\uCD08",
   teacher: "\uAE40\uC120\uC0DD\uB2D8",
-  className: "\uB3C4\uC6C0\uBC18",
 };
 
 const studentsSeed: Student[] = [];
@@ -223,9 +228,14 @@ const behaviorMeta: Record<
     color: "bg-indigo-100 text-indigo-800",
   },
   selfHarm: {
-    label: "\uC790\uD574 \uC2DC\uB3C4",
+    label: "\uC790\uD574 \uD589\uB3D9",
     emoji: "\u26A0\uFE0F",
     color: "bg-rose-100 text-rose-800",
+  },
+  other: {
+    label: "\uAE30\uD0C0",
+    emoji: "\u270D\uFE0F",
+    color: "bg-slate-100 text-slate-700",
   },
 };
 
@@ -233,18 +243,19 @@ const antecedentOptions = [
   "\uACFC\uC81C \uC81C\uC2DC",
   "\uD65C\uB3D9 \uC804\uD658",
   "\uC18C\uC74C \uBC1C\uC0DD",
-  "\uB300\uAE30 \uC2DC\uAC04",
+  "\uAD00\uC2EC \uBD80\uC7AC",
   "\uB610\uB798 \uAC08\uB4F1",
-  "\uC9C0\uC2DC \uC774\uD574 \uC5B4\uB824\uC6C0",
+  "\uC6D0\uD558\uB294 \uD65C\uB3D9 \uC81C\uD55C",
+  "\uAE30\uD0C0",
 ];
 
 const consequenceOptions = [
-  "\uC5B8\uC5B4\uC801 \uC548\uB0B4",
+  "\uC5B8\uC5B4\uC801 \uD6C8\uC721",
   "\uC9C4\uC815 \uACF5\uAC04 \uC774\uB3D9",
   "\uAC10\uAC01 \uB3C4\uAD6C \uC81C\uACF5",
-  "\uD734\uC2DD",
+  "\uAD00\uC2EC \uC81C\uACF5",
   "\uD65C\uB3D9 \uC7AC\uC548\uB0B4",
-  "\uBCF4\uD638\uC790 \uACF5\uC720 \uD544\uC694",
+  "\uAE30\uD0C0",
 ];
 
 const studentToneOptions = [
@@ -257,6 +268,12 @@ const studentToneOptions = [
 ];
 
 function mapStudent(student: StudentResponse, index: number): Student {
+  const metadata = student.metadata ?? {};
+  const disability =
+    typeof metadata.disability === "string"
+      ? metadata.disability.trim()
+      : "";
+
   return {
     id: String(student.studentId),
     apiId: student.studentId,
@@ -266,7 +283,9 @@ function mapStudent(student: StudentResponse, index: number): Student {
         ? `\uCD08 ${student.grade}`
         : "\uBBF8\uC785\uB825",
     birthDate: student.birthDate,
+    disability: disability || "\uC7A5\uC560 \uC815\uBCF4 \uBBF8\uC785\uB825",
     support: student.iepSummary?.trim() || "\uC9C0\uC6D0 \uACC4\uD68D \uBBF8\uC785\uB825",
+    metadata,
     tone: studentToneOptions[index % studentToneOptions.length],
   };
 }
@@ -334,22 +353,30 @@ export default function Page() {
     null,
   );
   const [editingRecordId, setEditingRecordId] = useState<string | null>(null);
+  const [editingStudentId, setEditingStudentId] = useState<string | null>(null);
   const [selectedA, setSelectedA] = useState("");
+  const [customAntecedent, setCustomAntecedent] = useState("");
   const [selectedBehavior, setSelectedBehavior] = useState<Behavior | "">("");
+  const [customBehavior, setCustomBehavior] = useState("");
   const [selectedC, setSelectedC] = useState("");
+  const [customConsequence, setCustomConsequence] = useState("");
   const [memo, setMemo] = useState("");
   const [alertsOn, setAlertsOn] = useState(true);
   const [newStudentName, setNewStudentName] = useState("");
   const [newStudentGrade, setNewStudentGrade] = useState("");
   const [newStudentBirthDate, setNewStudentBirthDate] = useState("");
+  const [newStudentDisability, setNewStudentDisability] = useState("");
   const [newStudentSupport, setNewStudentSupport] = useState("");
   const [authMode, setAuthMode] = useState<AuthMode>("login");
   const [teacherName, setTeacherName] = useState("");
   const [teacherPassword, setTeacherPassword] = useState("");
   const [signupName, setSignupName] = useState("");
   const [signupSchoolName, setSignupSchoolName] = useState("");
+  const [signupClassName, setSignupClassName] = useState("");
+  const [className, setClassName] = useState("");
   const [authLoading, setAuthLoading] = useState(false);
   const [authError, setAuthError] = useState("");
+  const [authNotice, setAuthNotice] = useState("");
   const [studentsLoading, setStudentsLoading] = useState(false);
   const [studentsError, setStudentsError] = useState("");
   const [studentSaving, setStudentSaving] = useState(false);
@@ -409,7 +436,17 @@ export default function Page() {
 
     try {
       const page = await getStudents({ page: 0, size: 20 });
-      const nextStudents = page.content.map(mapStudent);
+      const details = await Promise.allSettled(
+        page.content.map((student) => getStudent(student.studentId)),
+      );
+      const nextStudents = page.content.map((student, index) =>
+        mapStudent(
+          details[index]?.status === "fulfilled"
+            ? details[index].value
+            : student,
+          index,
+        ),
+      );
       setStudents(nextStudents);
       setSelectedStudentId((current) => current || nextStudents[0]?.id || "");
     } catch (error) {
@@ -423,15 +460,17 @@ export default function Page() {
 
   const resetAbc = () => {
     setSelectedA("");
+    setCustomAntecedent("");
     setSelectedBehavior("");
+    setCustomBehavior("");
     setSelectedC("");
+    setCustomConsequence("");
     setMemo("");
   };
 
   const handleStartRecording = async () => {
-    if (!selectedStudent) {
-      setSessionError("\uBA3C\uC800 \uD559\uC0DD\uC744 \uB4F1\uB85D\uD558\uAC70\uB098 \uC120\uD0DD\uD574\uC8FC\uC138\uC694.");
-      setScreen("students");
+    if (students.length === 0) {
+      setSessionError("학생정보를 입력해주세요.");
       return;
     }
 
@@ -443,6 +482,8 @@ export default function Page() {
     setEditingRecordId(null);
     setMediaAssistStatus("active");
     setMediaAssistStartedAt(new Date().toISOString());
+    setActiveSessionId(null);
+    setIsRecording(true);
     resetAbc();
     setScreen("record");
 
@@ -460,62 +501,73 @@ export default function Page() {
       nextMediaStatus = "fallback";
     }
 
-    try {
-      const session = await startSession(selectedStudent.apiId, {
-        triggerType: "MANUAL",
-        mediaAssisted: nextMediaStatus === "active",
-      });
-      setActiveSessionId(session.sessionId);
-      setMediaStream(nextStream);
-      setMediaAssistStatus(nextMediaStatus);
-      setMediaAssistStartedAt(session.startedAt);
-      setIsRecording(true);
-    } catch (error) {
-      nextStream?.getTracks().forEach((track) => track.stop());
-      setMediaStream(null);
-      setIsRecording(false);
-      setMediaAssistStatus("idle");
-      setSessionError(apiMessage(error));
-    } finally {
-      setSessionLoading(false);
-    }
+    setMediaStream(nextStream);
+    setMediaAssistStatus(nextMediaStatus);
+    setSessionLoading(false);
   };
 
-  const handleEndRecording = async () => {
-    if (!activeSessionId) {
-      setSessionError("\uC9C4\uD589 \uC911\uC778 \uC138\uC158 ID\uB97C \uCC3E\uC744 \uC218 \uC5C6\uC2B5\uB2C8\uB2E4.");
-      return;
-    }
-
+  const handleEndRecording = () => {
     setSessionLoading(true);
     setSessionError("");
     const now = new Date();
     mediaStream?.getTracks().forEach((track) => track.stop());
     setMediaStream(null);
 
-    try {
-      const session = await endSession(activeSessionId);
-      setPendingRecord(sessionToPendingRecord(session));
-      setActiveSessionId(null);
-      setIsRecording(false);
-      setScreen("recordStudent");
-    } catch (error) {
-      setSessionError(apiMessage(error));
-      setMediaAssistStartedAt(mediaAssistStartedAt || now.toISOString());
-    } finally {
-      setSessionLoading(false);
-    }
+    const startedAt = mediaAssistStartedAt || now.toISOString();
+    setPendingRecord({
+      id: `local-${now.getTime()}`,
+      date: now.toISOString().slice(0, 10),
+      time: now.toLocaleTimeString("ko-KR", {
+        hour: "2-digit",
+        minute: "2-digit",
+        hour12: false,
+      }),
+      duration: Math.max(elapsed, 1),
+      mediaAssistEnabled: mediaAssistStatus === "active",
+      mediaStatus: mediaAssistStatus === "active" ? "active" : "fallback",
+      detectedBehavior:
+        mediaAssistStatus === "active"
+          ? "영상·음성 보조 세션"
+          : "텍스트 기록 모드",
+      confidence: mediaAssistStatus === "active" ? 0.72 : 0,
+      startedAt,
+      endedAt: now.toISOString(),
+    });
+    setActiveSessionId(null);
+    setIsRecording(false);
+    setSessionLoading(false);
+    setScreen("recordStudent");
   };
 
-  const handleSelectRecordedStudent = (studentId: string) => {
+  const handleSelectRecordedStudent = async (studentId: string) => {
     if (!pendingRecord) return;
 
     const student = students.find((item) => item.id === studentId);
     if (!student) return;
 
+    setSessionLoading(true);
+    setSessionError("");
+
+    let nextPendingRecord = pendingRecord;
+    try {
+      const session = await startSession(student.apiId, {
+        triggerType: "MANUAL",
+        mediaAssisted: pendingRecord.mediaStatus === "active",
+      });
+      await endSession(session.sessionId);
+      nextPendingRecord = {
+        ...pendingRecord,
+        id: String(session.sessionId),
+      };
+    } catch {
+      nextPendingRecord = pendingRecord;
+    } finally {
+      setSessionLoading(false);
+    }
+
     setSelectedStudentId(student.id);
     setDraft({
-      ...pendingRecord,
+      ...nextPendingRecord,
       studentId: student.id,
       studentName: student.name,
     });
@@ -524,13 +576,27 @@ export default function Page() {
   };
 
   const handleSaveRecord = (completed: boolean) => {
-    if (!draft || !selectedBehavior) return;
+    if (
+      !draft ||
+      !selectedBehavior ||
+      (selectedBehavior === "other" && !customBehavior.trim()) ||
+      (selectedA === "\uAE30\uD0C0" && !customAntecedent.trim()) ||
+      (selectedC === "\uAE30\uD0C0" && !customConsequence.trim())
+    ) {
+      return;
+    }
 
     const nextRecord: BehaviorRecord = {
       ...draft,
       antecedent: selectedA,
+      customAntecedent:
+        selectedA === "\uAE30\uD0C0" ? customAntecedent.trim() : undefined,
       behavior: selectedBehavior,
+      customBehavior:
+        selectedBehavior === "other" ? customBehavior.trim() : undefined,
       consequence: selectedC,
+      customConsequence:
+        selectedC === "\uAE30\uD0C0" ? customConsequence.trim() : undefined,
       memo,
       completed,
     };
@@ -568,18 +634,38 @@ export default function Page() {
     setEditingRecordId(record.id);
     setSelectedStudentId(record.studentId);
     setSelectedA(record.antecedent);
+    setCustomAntecedent(record.customAntecedent ?? "");
     setSelectedBehavior(record.behavior);
+    setCustomBehavior(record.customBehavior ?? "");
     setSelectedC(record.consequence);
+    setCustomConsequence(record.customConsequence ?? "");
     setMemo(record.memo);
     setIsRecording(false);
     setScreen("abc");
   };
 
   const handleOpenNewStudent = () => {
+    setEditingStudentId(null);
     setNewStudentName("");
     setNewStudentGrade("");
     setNewStudentBirthDate("");
+    setNewStudentDisability("");
     setNewStudentSupport("");
+    setStudentError("");
+    setScreen("newStudent");
+  };
+
+  const handleOpenEditStudent = (student: Student) => {
+    setEditingStudentId(student.id);
+    setNewStudentName(student.name);
+    setNewStudentGrade(student.grade === "미입력" ? "" : student.grade);
+    setNewStudentBirthDate(student.birthDate);
+    setNewStudentDisability(
+      student.disability === "장애 정보 미입력" ? "" : student.disability,
+    );
+    setNewStudentSupport(
+      student.support === "지원 계획 미입력" ? "" : student.support,
+    );
     setStudentError("");
     setScreen("newStudent");
   };
@@ -595,11 +681,52 @@ export default function Page() {
     setStudentError("");
 
     try {
+      if (editingStudentId) {
+        const targetIndex = students.findIndex(
+          (student) => student.id === editingStudentId,
+        );
+        const targetStudent = students[targetIndex];
+        if (!targetStudent) return;
+
+        const updated = await updateStudent(targetStudent.apiId, {
+          grade: parseGrade(newStudentGrade),
+          iepSummary: newStudentSupport.trim() || undefined,
+          metadata: {
+            ...targetStudent.metadata,
+            disability: newStudentDisability.trim() || null,
+          },
+        });
+        const nextStudent = mapStudent(
+          updated,
+          targetIndex >= 0 ? targetIndex : students.length,
+        );
+
+        setStudents((current) =>
+          current.map((student) =>
+            student.id === editingStudentId
+              ? { ...nextStudent, tone: student.tone }
+              : student,
+          ),
+        );
+        setSelectedStudentId(nextStudent.id);
+        setEditingStudentId(null);
+        setNewStudentName("");
+        setNewStudentGrade("");
+        setNewStudentBirthDate("");
+        setNewStudentDisability("");
+        setNewStudentSupport("");
+        setScreen("students");
+        return;
+      }
+
       const created = await createStudent({
         name,
         birthDate,
         grade: parseGrade(newStudentGrade),
         iepSummary: newStudentSupport.trim() || undefined,
+        metadata: {
+          disability: newStudentDisability.trim() || null,
+        },
       });
       const nextStudent = mapStudent(created, students.length);
 
@@ -608,6 +735,7 @@ export default function Page() {
       setNewStudentName("");
       setNewStudentGrade("");
       setNewStudentBirthDate("");
+      setNewStudentDisability("");
       setNewStudentSupport("");
       setScreen("students");
     } catch (error) {
@@ -623,6 +751,7 @@ export default function Page() {
 
     setAuthLoading(true);
     setAuthError("");
+    setAuthNotice("");
 
     try {
       const result = await login({
@@ -630,6 +759,7 @@ export default function Page() {
         password: teacherPassword,
       });
       setTeacherName(result.teacher.name.trim() || result.teacher.email);
+      setClassName(result.teacher.className?.trim() ?? "");
       setTeacherPassword("");
       setScreen("home");
       await loadStudents();
@@ -642,26 +772,38 @@ export default function Page() {
 
   const handleSignup = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (!teacherName.trim() || !teacherPassword.trim() || !signupName.trim()) {
+    if (
+      !teacherName.trim() ||
+      !teacherPassword.trim() ||
+      !signupName.trim() ||
+      !signupSchoolName.trim() ||
+      !signupClassName.trim()
+    ) {
       return;
     }
 
     setAuthLoading(true);
     setAuthError("");
+    setAuthNotice("");
 
     try {
+      const signupEmail = teacherName.trim();
       const result = await signup({
-        email: teacherName.trim(),
+        email: signupEmail,
         password: teacherPassword,
         name: signupName.trim(),
-        schoolName: signupSchoolName.trim() || undefined,
+        schoolName: signupSchoolName.trim(),
+        className: signupClassName.trim(),
       });
-      setTeacherName(result.teacher.name.trim() || result.teacher.email);
+      setTeacherName(signupEmail);
       setTeacherPassword("");
       setSignupName("");
       setSignupSchoolName("");
-      setScreen("home");
-      await loadStudents();
+      setSignupClassName("");
+      setClassName(result.teacher.className?.trim() ?? "");
+      setAuthMode("login");
+      setScreen("login");
+      setAuthNotice("회원가입이 완료되었습니다. 로그인해주세요.");
     } catch (error) {
       setAuthError(apiMessage(error));
     } finally {
@@ -672,6 +814,7 @@ export default function Page() {
   const handleAuthModeChange = (mode: AuthMode) => {
     setAuthMode(mode);
     setAuthError("");
+    setAuthNotice("");
     setTeacherPassword("");
   };
 
@@ -693,7 +836,9 @@ export default function Page() {
                 : screen === "students"
                   ? T.studentManage
                   : screen === "newStudent"
-                    ? "\uD559\uC0DD \uC815\uBCF4 \uC785\uB825"
+                    ? editingStudentId
+                      ? "\uD559\uC0DD \uC815\uBCF4 \uC218\uC815"
+                      : "\uD559\uC0DD \uC815\uBCF4 \uC785\uB825"
                     : T.settingsTitle;
 
   return (
@@ -702,10 +847,12 @@ export default function Page() {
         {screen !== "login" && (
           <AppHeader
             title={currentTitle}
-            subtitle={screen === "home" ? teacherName : T.className}
+            subtitle={screen === "home" ? teacherName : className}
             showBack={screen !== "home"}
             onBack={() => {
               if (screen === "newStudent") {
+                setEditingStudentId(null);
+                setStudentError("");
                 setScreen("students");
                 return;
               }
@@ -728,13 +875,17 @@ export default function Page() {
               password={teacherPassword}
               signupName={signupName}
               signupSchoolName={signupSchoolName}
+              signupClassName={signupClassName}
+              classNameLabel={className}
               loading={authLoading}
               error={authError}
+              notice={authNotice}
               onModeChange={handleAuthModeChange}
               onTeacherNameChange={setTeacherName}
               onPasswordChange={setTeacherPassword}
               onSignupNameChange={setSignupName}
               onSignupSchoolNameChange={setSignupSchoolName}
+              onSignupClassNameChange={setSignupClassName}
               onLogin={handleLogin}
               onSignup={handleSignup}
             />
@@ -783,12 +934,18 @@ export default function Page() {
             <AbcInputScreen
               draft={draft}
               selectedA={selectedA}
+              customAntecedent={customAntecedent}
               selectedBehavior={selectedBehavior}
+              customBehavior={customBehavior}
               selectedC={selectedC}
+              customConsequence={customConsequence}
               memo={memo}
               onSelectA={setSelectedA}
+              onCustomAntecedent={setCustomAntecedent}
               onSelectBehavior={setSelectedBehavior}
+              onCustomBehavior={setCustomBehavior}
               onSelectC={setSelectedC}
+              onCustomConsequence={setCustomConsequence}
               onMemo={setMemo}
               onSave={handleSaveRecord}
             />
@@ -810,6 +967,7 @@ export default function Page() {
               loading={studentsLoading}
               error={studentsError}
               onAdd={handleOpenNewStudent}
+              onSelect={handleOpenEditStudent}
               onRetry={loadStudents}
             />
           )}
@@ -818,14 +976,21 @@ export default function Page() {
               name={newStudentName}
               grade={newStudentGrade}
               birthDate={newStudentBirthDate}
+              disability={newStudentDisability}
               support={newStudentSupport}
               loading={studentSaving}
               error={studentError}
+              isEditing={Boolean(editingStudentId)}
               onNameChange={setNewStudentName}
               onGradeChange={setNewStudentGrade}
               onBirthDateChange={setNewStudentBirthDate}
+              onDisabilityChange={setNewStudentDisability}
               onSupportChange={setNewStudentSupport}
-              onCancel={() => setScreen("students")}
+              onCancel={() => {
+                setEditingStudentId(null);
+                setStudentError("");
+                setScreen("students");
+              }}
               onSave={handleSaveStudent}
             />
           )}
@@ -846,13 +1011,17 @@ function LoginScreen({
   password,
   signupName,
   signupSchoolName,
+  signupClassName,
+  classNameLabel,
   loading,
   error,
+  notice,
   onModeChange,
   onTeacherNameChange,
   onPasswordChange,
   onSignupNameChange,
   onSignupSchoolNameChange,
+  onSignupClassNameChange,
   onLogin,
   onSignup,
 }: {
@@ -861,13 +1030,17 @@ function LoginScreen({
   password: string;
   signupName: string;
   signupSchoolName: string;
+  signupClassName: string;
+  classNameLabel: string;
   loading: boolean;
   error: string;
+  notice: string;
   onModeChange: (mode: AuthMode) => void;
   onTeacherNameChange: (value: string) => void;
   onPasswordChange: (value: string) => void;
   onSignupNameChange: (value: string) => void;
   onSignupSchoolNameChange: (value: string) => void;
+  onSignupClassNameChange: (value: string) => void;
   onLogin: (event: FormEvent<HTMLFormElement>) => void;
   onSignup: (event: FormEvent<HTMLFormElement>) => void;
 }) {
@@ -880,7 +1053,11 @@ function LoginScreen({
           <ShieldCheck className="size-8" />
         </div>
         <div>
-          <p className="text-sm font-bold text-teal-700">{T.className}</p>
+          <p className="text-sm font-bold text-teal-700">
+            {isSignup
+              ? signupClassName || "\uBC18 \uC774\uB984\uC744 \uC124\uC815\uD574\uC8FC\uC138\uC694"
+              : classNameLabel || "\uBC18 \uC774\uB984 \uBBF8\uC124\uC815"}
+          </p>
           <h1 className="mt-2 text-3xl font-black tracking-normal text-slate-950">
             {isSignup ? "\uD2B9\uC218\uAD50\uC0AC \uD68C\uC6D0\uAC00\uC785" : T.loginTitle}
           </h1>
@@ -962,6 +1139,21 @@ function LoginScreen({
                     }
                     placeholder={"\uC608: \uD55C\uBE5B\uD2B9\uC218\uD559\uAD50"}
                     className="h-12 rounded-2xl bg-slate-50"
+                    required
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="signup-class">{"\uBC18 \uC774\uB984"}</Label>
+                  <Input
+                    id="signup-class"
+                    value={signupClassName}
+                    onChange={(event) =>
+                      onSignupClassNameChange(event.target.value)
+                    }
+                    placeholder={"\uC608: \uD589\uBCF5\uBC18"}
+                    className="h-12 rounded-2xl bg-slate-50"
+                    required
                   />
                 </div>
               </>
@@ -987,6 +1179,11 @@ function LoginScreen({
             {error}
           </p>
         )}
+        {notice && (
+          <p className="rounded-2xl bg-teal-50 px-4 py-3 text-sm font-semibold text-teal-700">
+            {notice}
+          </p>
+        )}
 
         <Button
           type="submit"
@@ -995,7 +1192,10 @@ function LoginScreen({
             loading ||
             !teacherName.trim() ||
             !password.trim() ||
-            (isSignup && !signupName.trim())
+            (isSignup &&
+              (!signupName.trim() ||
+                !signupSchoolName.trim() ||
+                !signupClassName.trim()))
           }
         >
           <LogIn className="mr-2 size-5" />
@@ -1250,8 +1450,6 @@ function RecordScreen({
   onEnd: () => void;
   onSimulateFallback: () => void;
 }) {
-  const isFallback = mediaAssistStatus === "fallback";
-
   return (
     <section className="space-y-4 pt-4">
       {!isRecording && (
@@ -1320,9 +1518,10 @@ function RecordScreen({
                 : selectedStudent.name}
             </p>
             {!isRecording && (
-              <p className="mt-1 text-sm text-sky-100">
-                {selectedStudent.support}
-              </p>
+              <div className="mt-1 space-y-1 text-sm text-sky-100">
+                <p>{selectedStudent.disability}</p>
+                <p>{selectedStudent.support}</p>
+              </div>
             )}
           </div>
           <p className="text-6xl font-black tabular-nums">
@@ -1354,11 +1553,6 @@ function RecordScreen({
               {error}
             </p>
           )}
-          {isRecording && isFallback && (
-            <p className="text-sm font-semibold text-orange-100">
-              {"\uBBF8\uB514\uC5B4 \uD65C\uC131\uD654 \uC2E4\uD328: \uD14D\uC2A4\uD2B8 \uAE30\uB85D \uBAA8\uB4DC\uB85C \uACC4\uC18D \uC9C4\uD589\uD569\uB2C8\uB2E4."}
-            </p>
-          )}
         </CardContent>
       </Card>
     </section>
@@ -1384,16 +1578,6 @@ function MediaAssistPreview({
 
   return (
     <div className="space-y-3 text-left">
-      <div className="flex items-center justify-between gap-2">
-        <Badge className="rounded-full bg-white/20 text-white hover:bg-white/20">
-          <Activity className="mr-1.5 size-3.5" />
-          {"\uC601\uC0C1\u00B7\uC74C\uC131 \uBCF4\uC870 \uBD84\uC11D \uC911"}
-        </Badge>
-        <Badge className="rounded-full bg-teal-100 text-teal-800 hover:bg-teal-100">
-          {"Privacy Safe"}
-        </Badge>
-      </div>
-
       <div className="relative overflow-hidden rounded-2xl bg-slate-950/50 shadow-inner">
         {!isFallback && stream ? (
           <video
@@ -1412,30 +1596,10 @@ function MediaAssistPreview({
               <p className="text-sm font-black">
                 {"\uBBF8\uB514\uC5B4 \uC2A4\uD2B8\uB9BC \uBBF8\uC5F0\uACB0"}
               </p>
-              <p className="text-xs font-semibold text-slate-200">
-                {"\uD14D\uC2A4\uD2B8 \uAE30\uB85D\uC740 \uACC4\uC18D \uAC00\uB2A5"}
-              </p>
             </div>
           </div>
         )}
 
-        <div className="absolute inset-x-3 top-3 flex flex-wrap gap-2">
-          <span className="rounded-full bg-sky-950/70 px-3 py-1 text-xs font-bold text-white">
-            {"\uC2E4\uC2DC\uAC04 \uBD84\uC11D \uC911"}
-          </span>
-          <span className="rounded-full bg-sky-950/70 px-3 py-1 text-xs font-bold text-white">
-            {"\uC6D0\uBCF8 \uC800\uC7A5 \uC548 \uD568"}
-          </span>
-          <span className="rounded-full bg-teal-500/80 px-3 py-1 text-xs font-bold text-white">
-            {"\uD504\uB77C\uC774\uBC84\uC2DC \uBCF4\uD638 \uBAA8\uB4DC"}
-          </span>
-        </div>
-
-        <div className="absolute bottom-3 left-3 rounded-full bg-white/90 px-3 py-1 text-xs font-black text-sky-800">
-          {isFallback
-            ? "\uD14D\uC2A4\uD2B8 \uAE30\uB85D \uBAA8\uB4DC"
-            : "\uC2E4\uC2DC\uAC04 \uC2A4\uD2B8\uB9BC \uBD84\uC11D \uBCF4\uC870 \uC911"}
-        </div>
       </div>
 
       <Button
@@ -1444,7 +1608,7 @@ function MediaAssistPreview({
         className="h-10 w-full rounded-2xl bg-white/90 text-sm font-bold text-sky-800 hover:bg-white"
         onClick={onSimulateFallback}
       >
-        {"\uBBF8\uB514\uC5B4 \uC2E4\uD328 \uC2DC\uBBAC\uB808\uC774\uC158"}
+        {"\uC74C\uC131\uB9CC \uAE30\uB85D"}
       </Button>
     </div>
   );
@@ -1453,27 +1617,51 @@ function MediaAssistPreview({
 function AbcInputScreen({
   draft,
   selectedA,
+  customAntecedent,
   selectedBehavior,
+  customBehavior,
   selectedC,
+  customConsequence,
   memo,
   onSelectA,
+  onCustomAntecedent,
   onSelectBehavior,
+  onCustomBehavior,
   onSelectC,
+  onCustomConsequence,
   onMemo,
   onSave,
 }: {
   draft: DraftRecord;
   selectedA: string;
+  customAntecedent: string;
   selectedBehavior: Behavior | "";
+  customBehavior: string;
   selectedC: string;
+  customConsequence: string;
   memo: string;
   onSelectA: (value: string) => void;
+  onCustomAntecedent: (value: string) => void;
   onSelectBehavior: (value: Behavior) => void;
+  onCustomBehavior: (value: string) => void;
   onSelectC: (value: string) => void;
+  onCustomConsequence: (value: string) => void;
   onMemo: (value: string) => void;
   onSave: (completed: boolean) => void;
 }) {
-  const ready = Boolean(selectedA && selectedBehavior && selectedC);
+  const hasAntecedent = Boolean(
+    selectedA &&
+      (selectedA !== "\uAE30\uD0C0" || customAntecedent.trim()),
+  );
+  const hasBehavior = Boolean(
+    selectedBehavior &&
+      (selectedBehavior !== "other" || customBehavior.trim()),
+  );
+  const hasConsequence = Boolean(
+    selectedC &&
+      (selectedC !== "\uAE30\uD0C0" || customConsequence.trim()),
+  );
+  const ready = Boolean(hasAntecedent && hasBehavior && hasConsequence);
 
   return (
     <section className="space-y-4 pt-4">
@@ -1488,21 +1676,6 @@ function AbcInputScreen({
               {formatDuration(draft.duration)}
             </Badge>
           </div>
-          {draft.mediaAssistEnabled && (
-            <div className="space-y-1 rounded-2xl bg-sky-50 p-3 text-sm font-semibold text-sky-800">
-              <p>
-                {draft.mediaStatus === "fallback"
-                  ? "\uBBF8\uB514\uC5B4 \uD65C\uC131\uD654 \uC2E4\uD328: \uD14D\uC2A4\uD2B8 \uAE30\uB85D \uBAA8\uB4DC\uB85C \uC9C4\uD589\uB428"
-                  : "\uC601\uC0C1\u00B7\uC74C\uC131 \uBCF4\uC870 \uBD84\uC11D \uBA54\uD0C0\uB370\uC774\uD130\uB9CC \uC800\uC7A5\uB429\uB2C8\uB2E4."}
-              </p>
-              <p>
-                {draft.detectedBehavior || "\uAC10\uC9C0 \uACB0\uACFC \uC5C6\uC74C"}
-                {typeof draft.confidence === "number"
-                  ? ` · ${Math.round(draft.confidence * 100)}%`
-                  : ""}
-              </p>
-            </div>
-          )}
         </CardContent>
       </Card>
 
@@ -1511,16 +1684,24 @@ function AbcInputScreen({
         options={antecedentOptions}
         selected={selectedA}
         onSelect={onSelectA}
+        customValue={customAntecedent}
+        onCustomValue={onCustomAntecedent}
+        customPlaceholder={"\uC120\uD589\uC0AC\uAC74\uC744 \uC785\uB825\uD558\uC138\uC694."}
       />
       <BehaviorChipGroup
         selected={selectedBehavior}
         onSelect={onSelectBehavior}
+        customBehavior={customBehavior}
+        onCustomBehavior={onCustomBehavior}
       />
       <ChipGroup
         title={T.consequence}
         options={consequenceOptions}
         selected={selectedC}
         onSelect={onSelectC}
+        customValue={customConsequence}
+        onCustomValue={onCustomConsequence}
+        customPlaceholder={"\uACB0\uACFC\uB97C \uC785\uB825\uD558\uC138\uC694."}
       />
 
       <Card className="rounded-2xl border-0 bg-white shadow-sm">
@@ -1544,7 +1725,7 @@ function AbcInputScreen({
           type="button"
           variant="outline"
           className="h-14 rounded-2xl bg-white font-bold"
-          disabled={!selectedBehavior}
+          disabled={!hasBehavior}
           onClick={() => onSave(false)}
         >
           {T.saveDraft}
@@ -1729,6 +1910,7 @@ function StudentScreen({
   loading,
   error,
   onAdd,
+  onSelect,
   onRetry,
 }: {
   students: Student[];
@@ -1736,6 +1918,7 @@ function StudentScreen({
   loading: boolean;
   error: string;
   onAdd: () => void;
+  onSelect: (student: Student) => void;
   onRetry: () => void;
 }) {
   return (
@@ -1776,9 +1959,11 @@ function StudentScreen({
           (record) => record.studentId === student.id,
         ).length;
         return (
-          <Card
+          <button
+            type="button"
             key={student.id}
-            className="rounded-2xl border-0 bg-white shadow-sm"
+            className="w-full rounded-2xl bg-white text-left shadow-sm transition hover:bg-sky-50"
+            onClick={() => onSelect(student)}
           >
             <CardContent className="flex items-center gap-4 p-4">
               <div
@@ -1789,7 +1974,10 @@ function StudentScreen({
               <div className="min-w-0 flex-1">
                 <p className="font-black">{student.name}</p>
                 <p className="text-sm text-slate-500">
-                  {student.grade} · {student.support}
+                  {student.grade} · {student.disability}
+                </p>
+                <p className="truncate text-xs text-slate-400">
+                  {student.support}
                 </p>
               </div>
               <Badge variant="secondary" className="rounded-full">
@@ -1797,7 +1985,7 @@ function StudentScreen({
                 {"\uAC74"}
               </Badge>
             </CardContent>
-          </Card>
+          </button>
         );
       })}
     </section>
@@ -1808,12 +1996,15 @@ function NewStudentScreen({
   name,
   grade,
   birthDate,
+  disability,
   support,
   loading,
   error,
+  isEditing,
   onNameChange,
   onGradeChange,
   onBirthDateChange,
+  onDisabilityChange,
   onSupportChange,
   onCancel,
   onSave,
@@ -1821,12 +2012,15 @@ function NewStudentScreen({
   name: string;
   grade: string;
   birthDate: string;
+  disability: string;
   support: string;
   loading: boolean;
   error: string;
+  isEditing: boolean;
   onNameChange: (value: string) => void;
   onGradeChange: (value: string) => void;
   onBirthDateChange: (value: string) => void;
+  onDisabilityChange: (value: string) => void;
   onSupportChange: (value: string) => void;
   onCancel: () => void;
   onSave: (event: FormEvent<HTMLFormElement>) => void;
@@ -1850,6 +2044,7 @@ function NewStudentScreen({
               className="h-12 rounded-2xl bg-slate-50"
               autoFocus
               required
+              disabled={isEditing}
             />
           </div>
 
@@ -1873,6 +2068,18 @@ function NewStudentScreen({
               onChange={(event) => onBirthDateChange(event.target.value)}
               className="h-12 rounded-2xl bg-slate-50"
               required
+              disabled={isEditing}
+            />
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="student-disability">{"\uC7A5\uC560 \uC815\uBCF4"}</Label>
+            <Input
+              id="student-disability"
+              value={disability}
+              onChange={(event) => onDisabilityChange(event.target.value)}
+              placeholder={"\uC608: \uC790\uD3D0\uC131 \uC7A5\uC560"}
+              className="h-12 rounded-2xl bg-slate-50"
             />
           </div>
 
@@ -1915,7 +2122,11 @@ function NewStudentScreen({
           disabled={loading || !name.trim() || !birthDate.trim()}
         >
           <Check className="mr-2 size-5" />
-          {loading ? "\uC800\uC7A5 \uC911" : "\uC800\uC7A5"}
+          {loading
+            ? "\uC800\uC7A5 \uC911"
+            : isEditing
+              ? "\uC218\uC815"
+              : "\uC800\uC7A5"}
         </Button>
       </div>
     </form>
@@ -1960,29 +2171,46 @@ function ChipGroup({
   options,
   selected,
   onSelect,
+  customValue,
+  onCustomValue,
+  customPlaceholder,
 }: {
   title: string;
   options: string[];
   selected: string;
   onSelect: (value: string) => void;
+  customValue?: string;
+  onCustomValue?: (value: string) => void;
+  customPlaceholder?: string;
 }) {
   return (
     <Card className="rounded-2xl border-0 bg-white shadow-sm">
       <CardHeader className="pb-2">
         <CardTitle className="text-base">{title}</CardTitle>
       </CardHeader>
-      <CardContent className="flex flex-wrap gap-2">
-        {options.map((option) => (
-          <Button
-            type="button"
-            key={option}
-            variant={selected === option ? "default" : "secondary"}
-            className={`h-10 rounded-full px-4 ${selected === option ? "bg-sky-700 hover:bg-sky-800" : "bg-slate-100 text-slate-700 hover:bg-slate-200"}`}
-            onClick={() => onSelect(option)}
-          >
-            {option}
-          </Button>
-        ))}
+      <CardContent className="space-y-3">
+        <div className="flex flex-wrap gap-2">
+          {options.map((option) => (
+            <Button
+              type="button"
+              key={option}
+              variant={selected === option ? "default" : "secondary"}
+              className={`h-10 rounded-full px-4 ${selected === option ? "bg-sky-700 hover:bg-sky-800" : "bg-slate-100 text-slate-700 hover:bg-slate-200"}`}
+              onClick={() => onSelect(option)}
+            >
+              {option}
+            </Button>
+          ))}
+        </div>
+        {selected === "\uAE30\uD0C0" && onCustomValue && (
+          <Input
+            value={customValue ?? ""}
+            onChange={(event) => onCustomValue(event.target.value)}
+            placeholder={customPlaceholder}
+            className="h-12 rounded-2xl bg-slate-50"
+            autoFocus
+          />
+        )}
       </CardContent>
     </Card>
   );
@@ -1991,30 +2219,51 @@ function ChipGroup({
 function BehaviorChipGroup({
   selected,
   onSelect,
+  customBehavior,
+  onCustomBehavior,
 }: {
   selected: Behavior | "";
   onSelect: (value: Behavior) => void;
+  customBehavior: string;
+  onCustomBehavior: (value: string) => void;
 }) {
   return (
     <Card className="rounded-2xl border-0 bg-white shadow-sm">
       <CardHeader className="pb-2">
         <CardTitle className="text-base">{T.behavior}</CardTitle>
       </CardHeader>
-      <CardContent className="grid grid-cols-2 gap-2">
-        {(Object.keys(behaviorMeta) as Behavior[]).map((key) => {
-          const item = behaviorMeta[key];
-          return (
-            <button
-              type="button"
-              key={key}
-              onClick={() => onSelect(key)}
-              className={`rounded-2xl border p-3 text-left shadow-sm ${selected === key ? "border-sky-700 bg-sky-50" : "border-slate-100 bg-white"}`}
-            >
-              <span className="text-2xl">{item.emoji}</span>
-              <span className="mt-2 block text-sm font-bold">{item.label}</span>
-            </button>
-          );
-        })}
+      <CardContent className="space-y-3">
+        <div className="grid grid-cols-2 gap-2">
+          {(Object.keys(behaviorMeta) as Behavior[]).map((key) => {
+            const item = behaviorMeta[key];
+            return (
+              <button
+                type="button"
+                key={key}
+                onClick={() => onSelect(key)}
+                className={`rounded-2xl border p-3 text-left shadow-sm ${selected === key ? "border-sky-700 bg-sky-50" : "border-slate-100 bg-white"}`}
+              >
+                <span className="text-2xl">{item.emoji}</span>
+                <span className="mt-2 block text-sm font-bold">{item.label}</span>
+              </button>
+            );
+          })}
+        </div>
+        {selected === "other" && (
+          <div className="space-y-2">
+            <Label htmlFor="custom-behavior">
+              {"\uD589\uB3D9 \uB0B4\uC6A9"}
+            </Label>
+            <Input
+              id="custom-behavior"
+              value={customBehavior}
+              onChange={(event) => onCustomBehavior(event.target.value)}
+              placeholder={"\uAD00\uCC30\uD55C \uD589\uB3D9\uC744 \uC785\uB825\uD558\uC138\uC694."}
+              className="h-12 rounded-2xl bg-slate-50"
+              autoFocus
+            />
+          </div>
+        )}
       </CardContent>
     </Card>
   );
@@ -2063,40 +2312,16 @@ function RecordRow({
             </div>
           </div>
           <p className="mt-1 text-sm font-semibold text-slate-700">
-            {meta.label}
+            {record.customBehavior || meta.label}
           </p>
           <p className="mt-1 text-xs text-slate-500">
             {record.time} · {formatDuration(record.duration)} ·{" "}
-            {record.antecedent || "-"}
+            {record.customAntecedent || record.antecedent || "-"}
           </p>
-          {record.mediaAssistEnabled && compact && (
-            <p className="mt-1 text-xs font-bold text-sky-700">
-              {record.mediaStatus === "fallback"
-                ? "\uD14D\uC2A4\uD2B8 \uAE30\uB85D \uBAA8\uB4DC"
-                : "\uC601\uC0C1\u00B7\uC74C\uC131 \uBCF4\uC870 \uD65C\uC131"}
-            </p>
-          )}
           {!compact && (
-            <>
-              <p className="mt-2 line-clamp-2 text-sm text-slate-500">
-                {record.memo || "\uBA54\uBAA8 \uC5C6\uC74C"}
-              </p>
-              {record.mediaAssistEnabled && (
-                <div className="mt-3 space-y-1 rounded-2xl bg-sky-50 p-3 text-sm font-semibold text-sky-800">
-                  <p>
-                    {record.mediaStatus === "fallback"
-                      ? "\uBBF8\uB514\uC5B4 \uD65C\uC131\uD654 \uC2E4\uD328: \uD14D\uC2A4\uD2B8 \uAE30\uB85D \uBAA8\uB4DC\uB85C \uC800\uC7A5\uB428"
-                      : "\uC601\uC0C1\u00B7\uC74C\uC131 \uBCF4\uC870 \uBD84\uC11D \uBA54\uD0C0\uB370\uC774\uD130\uB9CC \uC800\uC7A5\uB428"}
-                  </p>
-                  <p>
-                    {record.detectedBehavior || "\uAC10\uC9C0 \uACB0\uACFC \uC5C6\uC74C"}
-                    {typeof record.confidence === "number"
-                      ? ` · ${Math.round(record.confidence * 100)}%`
-                      : ""}
-                  </p>
-                </div>
-              )}
-            </>
+            <p className="mt-2 line-clamp-2 text-sm text-slate-500">
+              {record.memo || "\uBA54\uBAA8 \uC5C6\uC74C"}
+            </p>
           )}
         </div>
       </CardContent>
